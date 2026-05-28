@@ -124,8 +124,8 @@
       </div>
 
       <div class="field">
-        <label>Username</label>
-        <input id="username" type="text" value="buyer" />
+        <label>Email</label>
+        <input id="username" type="text" value="buyer@aden.demo" />
       </div>
       <div class="field">
         <label>Password</label>
@@ -149,9 +149,9 @@
           btn.classList.add('active');
           selectedRole = btn.dataset.role;
           const usernameInput = document.getElementById('username');
-          if (selectedRole === 'buyer') usernameInput.value = 'buyer';
-          else if (selectedRole === 'admin') usernameInput.value = 'admin';
-          else usernameInput.value = 'supplier1';
+          if (selectedRole === 'buyer') usernameInput.value = 'buyer@aden.demo';
+          else if (selectedRole === 'admin') usernameInput.value = 'admin@aden.demo';
+          else usernameInput.value = 'supplier1@aden.demo';
         });
       });
 
@@ -164,7 +164,7 @@
           const res = await fetch(`${API_BASE}/api/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ email, password })
           });
           const data = await res.json();
           if (!res.ok) {
