@@ -4,10 +4,6 @@
     {
       "src": "server/index.js",
       "use": "@vercel/node"
-    },
-    {
-      "src": "public/**",
-      "use": "@vercel/static"
     }
   ],
   "routes": [
@@ -16,12 +12,12 @@
       "dest": "server/index.js"
     },
     {
-      "src": "/assets/(.*)",
-      "dest": "/public/assets/$1"
+      "src": "/(.+\\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|html))",
+      "dest": "/public/$1"
     },
     {
-      "src": "/(.+\\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot))",
-      "dest": "/public/$1"
+      "src": "/assets/(.*)",
+      "dest": "/public/assets/$1"
     },
     {
       "src": "/(.*)",
