@@ -16,8 +16,5 @@
   },
   "engines": {
     "node": ">=18"
-  },
-  "devDependencies": {
-    "vercel": "^54.5.1"
   }
 }
