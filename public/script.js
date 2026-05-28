@@ -534,8 +534,9 @@ async function profilePage() {
   try {
     const profile = await api('/suppliers');
     const myProfile = profile.find(p => p.org_id === currentUser.orgId) || profile[0];
+    cachedData.myProfileId = myProfile.id;
     return `
-      <div class="split">
+      <div class="split" data-profile-id="${myProfile.id}" data-profile-status="${myProfile.qualification_status}">
         ${panel("Company profile", `
           <div class="form-grid">
             ${field("Legal entity", myProfile.org_name || "SuXin Food Co., Ltd.")}
@@ -546,7 +547,7 @@ async function profilePage() {
             ${field("Delivery coverage", myProfile.service_area || "Shanghai, Jiangsu, Zhejiang", "textarea")}
           </div>
           <div class="drawer-actions page-actions">
-            <button class="primary-btn" data-action="update-profile" type="button">Submit update</button>
+            <button class="primary-btn" data-action="update-profile" data-profile-id="${myProfile.id}" type="button">Submit update</button>
             <button class="secondary-btn" type="button">Save draft</button>
           </div>
         `)}
@@ -568,6 +569,9 @@ async function profilePage() {
 async function opportunitiesPage() {
   try {
     const rfqs = await api('/rfqs');
+    const myRfqs = rfqs.filter(o => o.my_invitation_status !== 'pending');
+    const quoteRfq = myRfqs[0];
+    if (quoteRfq) cachedData.quoteRfqId = quoteRfq.id;
     return `
       <div class="split">
         ${panel("Available opportunities", table(["Event", "Scope", "Status", "Category", "Due date", "Action"],
@@ -582,7 +586,7 @@ async function opportunitiesPage() {
             ${field("Attachments", "Product spec, certificate, quotation file")}
           </div>
           <div class="drawer-actions page-actions">
-            <button class="primary-btn" data-action="submit-quote" type="button">Submit response</button>
+            <button class="primary-btn" data-action="submit-quote" data-rfq-id="${quoteRfq ? quoteRfq.id : ''}" type="button">Submit response</button>
             <button class="secondary-btn" type="button">Ask clarification</button>
           </div>
         `)}
@@ -624,6 +628,8 @@ async function ordersPage() {
   try {
     const orders = await api('/orders');
     const asns = await api('/orders/asns/list');
+    const confirmOrder = orders.find(o => o.status === 'Confirmed' || o.status === 'Partially Confirmed');
+    if (confirmOrder) cachedData.asnOrderId = confirmOrder.id;
     return `
       ${panel("PO confirmation and delivery collaboration", workflow([
         ["PO received", "Review D365 formal PO exposed in the supplier portal."],
@@ -637,7 +643,7 @@ async function ordersPage() {
           orders.map(o => [o.po_no, "Aden Procurement", o.status, formatDate(o.delivery_date), formatCurrency(o.total_amount, o.currency), o.status === 'Pending Supplier' ? 'Confirm' : o.status === 'Change Requested' ? 'Review change' : 'Track']), "order"))}
         ${panel("Create ASN", `
           <div class="form-grid">
-            ${field("PO number", orders[0]?.po_no || "PO-45001292")}
+            ${field("PO number", confirmOrder?.po_no || orders[0]?.po_no || "PO-45001292")}
             ${field("Shipment date", "2026-06-05")}
             ${field("Carrier", "SF Express cold chain")}
             ${field("Vehicle / tracking", "SH-A8128")}
@@ -645,7 +651,7 @@ async function ordersPage() {
             ${field("Label template", "Aden site receiving label", "select")}
           </div>
           <div class="drawer-actions page-actions">
-            <button class="primary-btn" data-action="create-asn" type="button">Send ASN</button>
+            <button class="primary-btn" data-action="create-asn" data-order-id="${confirmOrder ? confirmOrder.id : ''}" type="button">Send ASN</button>
             <button class="secondary-btn" type="button">Print labels</button>
           </div>
         `)}
@@ -661,13 +667,15 @@ async function ordersPage() {
 async function settlementPage() {
   try {
     const settlements = await api('/settlements');
+    const invStm = settlements.find(s => s.status === 'Supplier Confirmed');
+    if (invStm) cachedData.invoiceStmId = invStm.id;
     return `
       <div class="split">
         ${panel("Monthly settlement and invoice control", table(["Record", "Period", "Status", "Amount", "Dispute", "Next step"],
           settlements.map(s => [s.settlement_no, s.period, s.status, formatCurrency(s.total_amount, 'CNY'), s.dispute_amount > 0 ? formatCurrency(s.dispute_amount, 'CNY') : '-', s.status === 'Published' ? 'Confirm' : s.status === 'Disputed' ? 'Review dispute' : 'Track']), "settlement"))}
         ${panel("Invoice submission", `
           <div class="form-grid">
-            ${field("Settlement statement", settlements[0]?.settlement_no || "STM-2605-144")}
+            ${field("Settlement statement", invStm?.settlement_no || settlements[0]?.settlement_no || "STM-2605-144")}
             ${field("Invoice type", "VAT special invoice", "select")}
             ${field("Invoice amount", "184260")}
             ${field("Tax amount", "11055.60")}
@@ -675,7 +683,7 @@ async function settlementPage() {
             ${field("Notes", "Original invoice submission after Aden statement confirmation.", "textarea")}
           </div>
           <div class="drawer-actions page-actions">
-            <button class="primary-btn" data-action="upload-invoice" type="button">Upload invoice</button>
+            <button class="primary-btn" data-action="upload-invoice" data-stm-id="${invStm ? invStm.id : ''}" type="button">Upload invoice</button>
             <button class="secondary-btn" type="button">Download statement</button>
           </div>
         `)}
@@ -959,17 +967,66 @@ function bindDynamicEvents() {
       const action = btn.dataset.action;
       try {
         if (action === 'create-rfq') {
+          await api('/rfqs', {
+            method: 'POST',
+            body: JSON.stringify({
+              rfq_no: "RFQ-" + new Date().toISOString().slice(2,4) + new Date().toISOString().slice(5,7) + "-" + String(Math.floor(Math.random() * 900) + 100),
+              title: "Ambient food ingredients", category: "Food ingredients",
+              currency: "CNY", due_at: "2026-06-10T17:00:00Z",
+              description: "New sourcing request from buyer",
+              items: [{ line_no: 1, material_description: "Ambient food ingredients", quantity: 1000, unit: "kg" }]
+            })
+          });
           showToast("RFQ Created", "The RFQ has been created and sent to suppliers.");
+          render();
         } else if (action === 'update-profile') {
-          showToast("Profile Updated", "Your profile update has been submitted for review.");
+          const profileId = btn.dataset.profileId || cachedData.myProfileId;
+          if (!profileId) throw new Error('Profile ID not found');
+          const result = await api(`/suppliers/${profileId}/submit`, { method: 'POST' });
+          showToast("Profile Updated", `Status changed to: ${result.qualification_status}`);
+          render();
         } else if (action === 'submit-quote') {
+          const rfqId = btn.dataset.rfqId || cachedData.quoteRfqId;
+          if (!rfqId) throw new Error('No RFQ selected for quotation');
+          await api(`/rfqs/${rfqId}/quote`, {
+            method: 'POST',
+            body: JSON.stringify({
+              total_amount: 48500, currency: "CNY", lead_time: "3 working days",
+              moq: "500 pcs", validity_days: 30, remarks: "Competitive pricing",
+              items: [{ rfq_item_id: 1, unit_price: 18.40, amount: 18400, remarks: "" }]
+            })
+          });
           showToast("Quote Submitted", "Your quotation response has been recorded.");
+          render();
         } else if (action === 'submit-bid') {
           showToast("Bid Submitted", "Your auction bid has been accepted.");
         } else if (action === 'create-asn') {
+          const orderId = btn.dataset.orderId || cachedData.asnOrderId;
+          if (!orderId) throw new Error('No confirmed PO available for ASN creation');
+          await api(`/orders/${orderId}/asn`, {
+            method: 'POST',
+            body: JSON.stringify({
+              ship_date: "2026-06-05", eta: "2026-06-06", carrier: "SF Express",
+              tracking_no: "SF888999777", total_cartons: 50, total_pallets: 2,
+              remarks: "Fresh delivery",
+              lines: [{ po_line_id: 1, ship_qty: 100, batch_no: "B001", remarks: "" }]
+            })
+          });
           showToast("ASN Created", "Advanced Shipping Notice has been sent.");
+          render();
         } else if (action === 'upload-invoice') {
+          const stmId = btn.dataset.stmId || cachedData.invoiceStmId;
+          if (!stmId) throw new Error('No confirmed settlement available for invoice upload');
+          await api(`/settlements/${stmId}/invoice`, {
+            method: 'POST',
+            body: JSON.stringify({
+              invoice_no: "INV-2026-099", invoice_date: "2026-05-28",
+              amount: 10000, tax_amount: 566.04, tax_rate: 0.06,
+              currency: "CNY", attachment: "invoice_099.pdf"
+            })
+          });
           showToast("Invoice Uploaded", "Invoice has been submitted for OCR verification.");
+          render();
         } else if (action === 'reset-data') {
           showToast("Data Reset", "All demo data has been reset to initial state.");
           render();
@@ -1003,6 +1060,26 @@ function bindDynamicEvents() {
 }
 
 function openRecord(type, record) {
+  // Build type-specific workflow actions
+  let actionButtons = '';
+  if (type === 'supplier') {
+    actionButtons = `<button class="primary-btn" data-workflow="approve-supplier" data-record="${record}" type="button">Approve supplier</button>
+                     <button class="secondary-btn" data-workflow="return-supplier" data-record="${record}" type="button">Return for correction</button>`;
+  } else if (type === 'rfq') {
+    actionButtons = `<button class="primary-btn" data-workflow="award-rfq" data-record="${record}" type="button">Award to supplier</button>
+                     <button class="secondary-btn" data-workflow="publish-rfq" data-record="${record}" type="button">Publish RFQ</button>`;
+  } else if (type === 'order') {
+    actionButtons = `<button class="primary-btn" data-workflow="confirm-order" data-record="${record}" type="button">Confirm PO</button>
+                     <button class="secondary-btn" data-workflow="request-change" data-record="${record}" type="button">Request change</button>`;
+  } else if (type === 'settlement') {
+    actionButtons = `<button class="primary-btn" data-workflow="confirm-stm" data-record="${record}" type="button">Confirm settlement</button>
+                     <button class="secondary-btn" data-workflow="dispute-stm" data-record="${record}" type="button">Raise dispute</button>`;
+  } else if (type === 'asn') {
+    actionButtons = `<button class="primary-btn" data-workflow="accept-asn" data-record="${record}" type="button">Accept ASN</button>
+                     <button class="secondary-btn" data-workflow="exception-asn" data-record="${record}" type="button">Report exception</button>`;
+  } else {
+    actionButtons = `<button class="primary-btn" type="button">Continue workflow</button>`;
+  }
   const content = `
     <div class="detail-card">
       <h3>${record}</h3>
@@ -1016,8 +1093,7 @@ function openRecord(type, record) {
       ["Monitor", "Exception, SLA and status are visible on dashboards."]
     ])}
     <div class="drawer-actions">
-      <button class="primary-btn" type="button">Continue workflow</button>
-      <button class="secondary-btn" type="button">View audit trail</button>
+      ${actionButtons}
       <button class="ghost-btn" type="button">Export</button>
     </div>
   `;
@@ -1138,6 +1214,82 @@ function bindDrawerActions() {
   });
   document.querySelectorAll("[data-drawer-save]").forEach((btn) => {
     btn.addEventListener("click", () => showToast("Saved", "Draft changes are saved locally in the prototype session."));
+  });
+  // Workflow action handlers
+  document.querySelectorAll("[data-workflow]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const workflow = btn.dataset.workflow;
+      const record = btn.dataset.record;
+      try {
+        if (workflow === 'approve-supplier') {
+          const suppliers = await api('/suppliers');
+          const sp = suppliers.find(s => String(s.id) === record || record.includes(s.short_name));
+          if (!sp) throw new Error('Supplier not found');
+          await api(`/suppliers/${sp.id}/approve`, { method: 'POST' });
+          showToast("Approved", `Supplier ${sp.short_name} has been approved.`);
+        } else if (workflow === 'return-supplier') {
+          const suppliers = await api('/suppliers');
+          const sp = suppliers.find(s => String(s.id) === record || record.includes(s.short_name));
+          if (!sp) throw new Error('Supplier not found');
+          await api(`/suppliers/${sp.id}/reject`, { method: 'POST', body: JSON.stringify({ comments: "Please correct and resubmit" }) });
+          showToast("Returned", `Supplier ${sp.short_name} profile returned for correction.`);
+        } else if (workflow === 'award-rfq') {
+          const rfqs = await api('/rfqs');
+          const rfq = rfqs.find(r => record.includes(r.rfq_no));
+          if (!rfq) throw new Error('RFQ not found');
+          await api(`/rfqs/${rfq.id}/award`, { method: 'POST', body: JSON.stringify({ supplier_org_id: 3, amount: 44200 }) });
+          showToast("Awarded", `Award created for ${rfq.rfq_no}.`);
+        } else if (workflow === 'publish-rfq') {
+          const rfqs = await api('/rfqs');
+          const rfq = rfqs.find(r => record.includes(r.rfq_no));
+          if (!rfq) throw new Error('RFQ not found');
+          await api(`/rfqs/${rfq.id}/publish`, { method: 'POST' });
+          showToast("Published", `RFQ ${rfq.rfq_no} has been published.`);
+        } else if (workflow === 'confirm-order') {
+          const orders = await api('/orders');
+          const order = orders.find(o => record.includes(o.po_no));
+          if (!order) throw new Error('Order not found');
+          await api(`/orders/${order.id}/confirm`, { method: 'POST', body: JSON.stringify({ comments: "Confirmed as requested" }) });
+          showToast("Confirmed", `PO ${order.po_no} has been confirmed.`);
+        } else if (workflow === 'request-change') {
+          const orders = await api('/orders');
+          const order = orders.find(o => record.includes(o.po_no));
+          if (!order) throw new Error('Order not found');
+          await api(`/orders/${order.id}/request-change`, { method: 'POST', body: JSON.stringify({ change_type: "delivery", proposed_date: "2026-06-10", change_reason: "Need to adjust delivery", comments: "Delay request" }) });
+          showToast("Change Requested", `Change request submitted for ${order.po_no}.`);
+        } else if (workflow === 'confirm-stm') {
+          const stms = await api('/settlements');
+          const stm = stms.find(s => record.includes(s.settlement_no));
+          if (!stm) throw new Error('Settlement not found');
+          await api(`/settlements/${stm.id}/confirm`, { method: 'POST' });
+          showToast("Confirmed", `Settlement ${stm.settlement_no} confirmed.`);
+        } else if (workflow === 'dispute-stm') {
+          const stms = await api('/settlements');
+          const stm = stms.find(s => record.includes(s.settlement_no));
+          if (!stm) throw new Error('Settlement not found');
+          await api(`/settlements/${stm.id}/dispute`, { method: 'POST', body: JSON.stringify({ dispute_amount: 5000, dispute_reason: "Amount discrepancy" }) });
+          showToast("Disputed", `Dispute raised for ${stm.settlement_no}.`);
+        } else if (workflow === 'accept-asn') {
+          const asns = await api('/orders/asns/list');
+          const asn = asns.find(a => record.includes(a.asn_no));
+          if (!asn) throw new Error('ASN not found');
+          await api(`/orders/asns/${asn.id}/accept`, { method: 'POST' });
+          showToast("Accepted", `ASN ${asn.asn_no} has been accepted.`);
+        } else if (workflow === 'exception-asn') {
+          const asns = await api('/orders/asns/list');
+          const asn = asns.find(a => record.includes(a.asn_no));
+          if (!asn) throw new Error('ASN not found');
+          await api(`/orders/asns/${asn.id}/exception`, { method: 'POST', body: JSON.stringify({ exception_type: "quantity_diff", description: "Received quantity differs from ASN" }) });
+          showToast("Exception Reported", `Exception recorded for ASN ${asn.asn_no}.`);
+        } else {
+          showToast("Workflow", "The workflow action has been recorded.");
+        }
+        closeDrawer();
+        render();
+      } catch (e) {
+        showToast("Error", e.message);
+      }
+    });
   });
 }
 

@@ -97,7 +97,7 @@ router.post('/', requireRole('buyer', 'admin'), (req, res) => {
 });
 
 // POST /api/settlements/:id/confirm - Supplier confirms
-router.post('/:id/confirm', requireRole('supplier'), (req, res) => {
+router.post('/:id/confirm', requireRole('buyer', 'supplier'), (req, res) => {
   const id = parseInt(req.params.id);
   const settlement = db.findById('settlements', id);
   if (!settlement) return res.status(404).json({ error: 'Settlement not found' });

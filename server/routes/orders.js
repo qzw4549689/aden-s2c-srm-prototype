@@ -102,7 +102,7 @@ router.post('/', requireRole('buyer', 'admin'), (req, res) => {
 });
 
 // POST /api/orders/:id/confirm - Supplier confirms PO
-router.post('/:id/confirm', requireRole('supplier'), (req, res) => {
+router.post('/:id/confirm', requireRole('buyer', 'supplier'), (req, res) => {
   const id = parseInt(req.params.id);
   const po = db.findById('purchase_orders', id);
   if (!po) return res.status(404).json({ error: 'PO not found' });

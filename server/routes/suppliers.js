@@ -136,6 +136,19 @@ router.post('/:id/submit', requireRole('supplier'), (req, res) => {
     due_at: new Date(Date.now() + 7 * 86400000).toISOString()
   });
 
+  // Notify supplier that onboarding has been submitted
+  const supplierUsers = db.findAll('users', { org_id: profile.org_id });
+  supplierUsers.forEach(u => {
+    db.insert('notifications', {
+      user_id: u.id,
+      title: 'Supplier onboarding submitted',
+      message: `Your supplier profile has been submitted for buyer review. Current status: Buyer Review.`,
+      object_type: 'onboarding',
+      object_id: id,
+      is_read: false
+    });
+  });
+
   res.json(updated);
 });
 
