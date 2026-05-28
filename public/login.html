@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Login - Aden S2C SRM Prototype</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <style>
+      .login-body {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          linear-gradient(120deg, rgba(240, 90, 40, 0.1), rgba(255, 255, 255, 0.68)),
+          radial-gradient(circle at 15% 15%, rgba(240, 90, 40, 0.12), transparent 34%),
+          #f6f7f9;
+      }
+      .login-card {
+        width: min(420px, calc(100vw - 48px));
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 36px;
+        box-shadow: var(--shadow);
+      }
+      .login-card img {
+        width: 120px;
+        height: auto;
+        display: block;
+        margin: 0 auto 24px;
+      }
+      .login-card h1 {
+        font-size: 22px;
+        text-align: center;
+        margin: 0 0 8px;
+      }
+      .login-card .subtitle {
+        text-align: center;
+        color: var(--muted);
+        font-size: 14px;
+        margin-bottom: 28px;
+      }
+      .login-card .field {
+        margin-bottom: 16px;
+      }
+      .login-card .field input, .login-card .field select {
+        width: 100%;
+      }
+      .login-card .primary-btn {
+        width: 100%;
+        min-height: 44px;
+        font-size: 15px;
+      }
+      .login-card .hint {
+        text-align: center;
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 18px;
+      }
+      .login-card .error {
+        color: var(--red);
+        font-size: 13px;
+        text-align: center;
+        margin-bottom: 12px;
+        display: none;
+      }
+      .login-card .error.show {
+        display: block;
+      }
+      .role-selector {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-bottom: 20px;
+      }
+      .role-option {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 8px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 160ms ease;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--muted);
+        background: #fff;
+      }
+      .role-option:hover {
+        border-color: #ffc7b1;
+      }
+      .role-option.active {
+        border-color: var(--aden-orange);
+        background: var(--orange-050);
+        color: var(--orange-700);
+      }
+      .role-option strong {
+        display: block;
+        font-size: 14px;
+        margin-bottom: 2px;
+      }
+    </style>
+  </head>
+  <body class="login-body">
+    <div class="login-card">
+      <img src="./assets/aden-logo.jpg" alt="Aden" />
+      <h1>Aden S2C SRM</h1>
+      <p class="subtitle">Prototype Demo System</p>
+
+      <div class="error" id="errorMsg"></div>
+
+      <div class="role-selector" id="roleSelector">
+        <button class="role-option active" data-role="buyer" type="button">
+          <strong>Buyer</strong>
+          Procurement
+        </button>
+        <button class="role-option" data-role="supplier" type="button">
+          <strong>Supplier</strong>
+          External
+        </button>
+        <button class="role-option" data-role="admin" type="button">
+          <strong>Admin</strong>
+          System
+        </button>
+      </div>
+
+      <div class="field">
+        <label>Username</label>
+        <input id="username" type="text" value="buyer" />
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input id="password" type="password" value="demo123" />
+      </div>
+      <button class="primary-btn" id="loginBtn" type="button">Sign In</button>
+
+      <p class="hint">
+        Default accounts: buyer / supplier1~5 / admin<br>
+        Password: demo123
+      </p>
+    </div>
+
+    <script>
+      const API_BASE = '';
+      let selectedRole = 'buyer';
+
+      document.querySelectorAll('.role-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.role-option').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          selectedRole = btn.dataset.role;
+          const usernameInput = document.getElementById('username');
+          if (selectedRole === 'buyer') usernameInput.value = 'buyer';
+          else if (selectedRole === 'admin') usernameInput.value = 'admin';
+          else usernameInput.value = 'supplier1';
+        });
+      });
+
+      async function login() {
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+        const errorEl = document.getElementById('errorMsg');
+
+        try {
+          const res = await fetch(`${API_BASE}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            errorEl.textContent = data.error || 'Login failed';
+            errorEl.classList.add('show');
+            return;
+          }
+          localStorage.setItem('aden_token', data.token);
+          localStorage.setItem('aden_user', JSON.stringify(data.user));
+
+          if (data.user.role === 'admin') {
+            window.location.href = './admin.html';
+          } else if (data.user.role === 'supplier') {
+            window.location.href = './supplier.html';
+          } else {
+            window.location.href = './buyer.html';
+          }
+        } catch (err) {
+          errorEl.textContent = 'Network error. Please try again.';
+          errorEl.classList.add('show');
+        }
+      }
+
+      document.getElementById('loginBtn').addEventListener('click', login);
+      document.getElementById('password').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') login();
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aden Admin - S2C SRM Prototype</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <style>
+      .admin-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+        margin-bottom: 20px;
+      }
+      .admin-card {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 20px;
+        text-align: center;
+      }
+      .admin-card strong {
+        display: block;
+        font-size: 32px;
+        color: var(--aden-orange);
+        margin-bottom: 6px;
+      }
+      .admin-card span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .config-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      .config-table th {
+        padding: 12px;
+        text-align: left;
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        border-bottom: 1px solid var(--line);
+        background: #fafbfc;
+      }
+      .config-table td {
+        padding: 12px;
+        border-bottom: 1px solid #eef0f3;
+      }
+      .config-table input {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 13px;
+        width: 100%;
+      }
+      .danger-zone {
+        border: 1px solid #fecaca;
+        background: #fef2f2;
+        border-radius: 8px;
+        padding: 20px;
+        margin-top: 20px;
+      }
+      .danger-zone h3 {
+        color: #b42318;
+        margin: 0 0 12px;
+      }
+      .danger-btn {
+        background: #b42318;
+        color: #fff;
+        border: 0;
+        border-radius: 7px;
+        padding: 10px 18px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body data-workspace="admin">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <img src="./assets/aden-logo.jpg" alt="Aden" />
+          <div>
+            <strong>Admin Console</strong>
+            <span>System Management</span>
+          </div>
+        </div>
+        <a class="workspace-link" href="./buyer.html">Open Buyer Workspace</a>
+        <a class="workspace-link" href="./supplier.html" style="margin-top:8px">Open Supplier Portal</a>
+        <nav class="nav" id="nav"></nav>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Admin Console</p>
+            <h1 id="pageTitle">System Dashboard</h1>
+          </div>
+          <div class="top-actions">
+            <button class="secondary-btn" id="logoutBtn" type="button">Logout</button>
+          </div>
+        </header>
+
+        <section id="content" class="content"></section>
+      </main>
+    </div>
+
+    <script src="./script.js?v=admin"></script>
+    <script>
+      (function() {
+        const token = localStorage.getItem('aden_token');
+        const user = JSON.parse(localStorage.getItem('aden_user') || '{}');
+        if (!token || user.role !== 'admin') {
+          window.location.href = './login.html';
+          return;
+        }
+
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+          localStorage.removeItem('aden_token');
+          localStorage.removeItem('aden_user');
+          window.location.href = './login.html';
+        });
+      })();
+    </script>
+  </body>
+</html>

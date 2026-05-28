@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aden Buyer Workspace - S2C SRM Prototype</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-workspace="buyer">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <img src="./assets/aden-logo.jpg" alt="Aden" />
+          <div>
+            <strong>Buyer Workspace</strong>
+            <span>DeKeYiCai SRM</span>
+          </div>
+        </div>
+
+        <a class="workspace-link" href="./supplier.html">Open Supplier Portal</a>
+        <nav class="nav" id="nav"></nav>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="workspaceLabel">Buyer Workspace</p>
+            <h1 id="pageTitle">S2C Command Center</h1>
+          </div>
+          <div class="top-actions">
+            <label class="search">
+              <span>Search</span>
+              <input id="globalSearch" type="search" placeholder="supplier, RFQ, contract, material..." />
+            </label>
+            <button class="icon-btn" id="openNotifications" type="button" aria-label="Open notifications">!</button>
+            <button class="primary-btn" id="primaryAction" type="button">Create RFQ</button>
+          </div>
+        </header>
+
+        <section class="status-bar">
+          <div class="status-card integration-status">
+            <i aria-hidden="true"></i>
+            <span>Integration state</span>
+            <strong>D365 master data synced 4 min ago</strong>
+            <small>12 active interfaces · 0 failed messages · Avg latency 1.8s</small>
+          </div>
+        </section>
+
+        <section id="content" class="content"></section>
+      </main>
+    </div>
+
+    <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
+    <aside class="drawer" id="drawer" aria-hidden="true">
+      <div class="drawer-head">
+        <div>
+          <p class="eyebrow" id="drawerKicker">Detail</p>
+          <h2 id="drawerTitle">Record detail</h2>
+        </div>
+        <button class="icon-btn" id="closeDrawer" type="button" aria-label="Close detail">x</button>
+      </div>
+      <div id="drawerBody" class="drawer-body"></div>
+    </aside>
+
+    <script src="./script.js?v=api"></script>
+    <script>
+      (function() {
+        const token = localStorage.getItem('aden_token');
+        const user = JSON.parse(localStorage.getItem('aden_user') || '{}');
+        if (!token || (user.role !== 'buyer' && user.role !== 'admin')) {
+          window.location.href = './login.html';
+        }
+      })();
+    </script>
+  </body>
+</html>
