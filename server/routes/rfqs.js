@@ -1,155 +1,315 @@
 const express = require('express');
 const db = require('../db');
-const { authMiddleware, requireRole } = require('../auth');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
-router.use(authMiddleware);
+router.use(authenticateToken);
 
+// GET /api/rfqs - List RFQs
 router.get('/', (req, res) => {
-  const rfqs = db.findAll('rfqs');
+  const { status, category, search, myInvitations } = req.query;
+  let rfqs = db.findAll('rfqs');
+
+  // Supplier: only see invited RFQs
+  if (req.user.role === 'supplier') {
+    const myOrgId = req.user.orgId;
+    const myInvs = db.findAll('rfq_invitations', { supplier_org_id: myOrgId });
+    const rfqIds = myInvs.map(i => i.rfq_id);
+    rfqs = rfqs.filter(r => rfqIds.includes(r.id));
+
+    // Enrich with invitation status
+    rfqs = rfqs.map(r => {
+      const inv = myInvs.find(i => i.rfq_id === r.id);
+      return { ...r, my_invitation_status: inv ? inv.status : null };
+    });
+  }
+
+  if (status) rfqs = rfqs.filter(r => r.status === status);
+  if (category) rfqs = rfqs.filter(r => r.category === category);
+  if (search) {
+    const q = search.toLowerCase();
+    rfqs = rfqs.filter(r => r.rfq_no.toLowerCase().includes(q) || r.title.toLowerCase().includes(q));
+  }
+
   res.json(rfqs);
 });
 
+// GET /api/rfqs/:id - Get RFQ detail with items
 router.get('/:id', (req, res) => {
-  const rfq = db.findById('rfqs', parseInt(req.params.id));
-  if (!rfq) return res.status(404).json({ error: 'Not found' });
-  const quotes = db.findAll('rfq_quotes', { rfq_id: rfq.id });
-  res.json({ ...rfq, quotes });
+  const id = parseInt(req.params.id);
+  const rfq = db.findById('rfqs', id);
+  if (!rfq) return res.status(404).json({ error: 'RFQ not found' });
+
+  const items = db.findAll('rfq_items', { rfq_id: id });
+  const invitations = db.findAll('rfq_invitations', { rfq_id: id });
+  const quotes = db.findAll('quotes', { rfq_id: id });
+
+  // Enrich invitations with supplier names
+  const enrichedInvs = invitations.map(i => {
+    const org = db.findById('organizations', i.supplier_org_id);
+    return { ...i, supplier_name: org ? org.short_name : null };
+  });
+
+  // Enrich quotes with supplier names
+  const enrichedQuotes = quotes.map(q => {
+    const org = db.findById('organizations', q.supplier_org_id);
+    return { ...q, supplier_name: org ? org.short_name : null };
+  });
+
+  res.json({ ...rfq, items, invitations: enrichedInvs, quotes: enrichedQuotes });
 });
 
+// POST /api/rfqs - Create RFQ (buyer/admin)
 router.post('/', requireRole('buyer', 'admin'), (req, res) => {
-  const { code, scope, status, suppliers_count, due_date, round, category, sourcing_method } = req.body;
+  const { title, category, due_at, items, invited_supplier_ids } = req.body;
+
+  const count = db.findAll('rfqs').length;
+  const rfqNo = `RFQ-${new Date().toISOString().slice(2, 4)}${new Date().toISOString().slice(5, 7)}-${String(count + 1).padStart(3, '0')}`;
+
   const rfq = db.insert('rfqs', {
-    code: code || `RFQ-${new Date().toISOString().slice(2, 7).replace('-', '')}-${String(db.findAll('rfqs').length + 1).padStart(3, '0')}`,
-    scope, status: status || 'Draft', suppliers_count: suppliers_count || '0 suppliers',
-    due_date, round: round || '1 round', category, sourcing_method: sourcing_method || 'Invited RFQ',
-    created_by: req.user.username
+    rfq_no: rfqNo,
+    title,
+    category,
+    status: 'Draft',
+    due_at,
+    created_by: req.user.userId,
+    published_at: null,
+    award_supplier_id: null,
+    award_amount: null,
+    rejection_reason: null,
+    revision_count: 0
   });
-  db.insert('history', {
-    user_id: req.user.username,
-    action: 'Created RFQ',
-    entity_type: 'rfq',
-    entity_id: rfq.id,
-    details: `RFQ ${rfq.code} created`
-  });
+
+  // Insert items
+  if (items && items.length > 0) {
+    items.forEach(item => {
+      db.insert('rfq_items', { rfq_id: rfq.id, ...item });
+    });
+  }
+
+  // Create invitations
+  if (invited_supplier_ids && invited_supplier_ids.length > 0) {
+    invited_supplier_ids.forEach(sid => {
+      db.insert('rfq_invitations', {
+        rfq_id: rfq.id,
+        supplier_org_id: sid,
+        status: 'pending',
+        invited_at: new Date().toISOString(),
+        responded_at: null
+      });
+    });
+  }
+
   res.status(201).json(rfq);
 });
 
+// PUT /api/rfqs/:id - Update RFQ
 router.put('/:id', requireRole('buyer', 'admin'), (req, res) => {
-  const rfq = db.update('rfqs', parseInt(req.params.id), req.body);
-  if (!rfq) return res.status(404).json({ error: 'Not found' });
-  db.insert('history', {
-    user_id: req.user.username,
-    action: 'Updated RFQ',
-    entity_type: 'rfq',
-    entity_id: rfq.id,
-    details: `RFQ ${rfq.code} updated`
-  });
-  res.json(rfq);
-});
-
-// Publish RFQ
-router.post('/:id/publish', requireRole('buyer', 'admin'), (req, res) => {
-  const rfq = db.update('rfqs', parseInt(req.params.id), { status: 'Open' });
-  if (!rfq) return res.status(404).json({ error: 'Not found' });
-  db.insert('history', {
-    user_id: req.user.username,
-    action: 'Published RFQ',
-    entity_type: 'rfq',
-    entity_id: rfq.id,
-    details: `RFQ ${rfq.code} published to suppliers`
-  });
-  // Create tasks for suppliers
-  db.findAll('users', { role: 'supplier' }).forEach(u => {
-    db.insert('tasks', {
-      title: `${rfq.code}: Submit quote`,
-      type: 'rfq',
-      status: 'open',
-      assigned_to: u.username,
-      related_type: 'rfq',
-      related_id: rfq.id,
-      priority: 'medium',
-      due_date: rfq.due_date
-    });
-    db.insert('notifications', {
-      user_id: u.username,
-      title: 'New RFQ invitation',
-      message: `You are invited to ${rfq.code}: ${rfq.scope}`,
-      type: 'info',
-      is_read: false,
-      related_type: 'rfq',
-      related_id: rfq.id
-    });
-  });
-  res.json(rfq);
-});
-
-// Submit quote
-router.post('/:id/quotes', requireRole('supplier'), (req, res) => {
-  const rfqId = parseInt(req.params.id);
-  const rfq = db.findById('rfqs', rfqId);
+  const id = parseInt(req.params.id);
+  const rfq = db.findById('rfqs', id);
   if (!rfq) return res.status(404).json({ error: 'RFQ not found' });
-  if (rfq.status !== 'Open') return res.status(400).json({ error: 'RFQ is not open' });
 
-  const { unit_price, currency, lead_time, moq, notes } = req.body;
-  const quote = db.insert('rfq_quotes', {
-    rfq_id: rfqId,
-    supplier_id: req.user.id,
-    supplier_name: req.user.name,
-    unit_price, currency: currency || 'CNY', lead_time, moq, notes,
-    status: 'Submitted'
+  const updates = req.body;
+  delete updates.id;
+  delete updates.created_at;
+
+  const updated = db.update('rfqs', id, updates);
+  res.json(updated);
+});
+
+// POST /api/rfqs/:id/publish - Publish RFQ
+router.post('/:id/publish', requireRole('buyer', 'admin'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const rfq = db.findById('rfqs', id);
+  if (!rfq) return res.status(404).json({ error: 'RFQ not found' });
+
+  const updated = db.update('rfqs', id, {
+    status: 'Published',
+    published_at: new Date().toISOString()
   });
-  db.insert('history', {
-    user_id: req.user.username,
-    action: 'Submitted quote',
-    entity_type: 'rfq',
-    entity_id: rfqId,
-    details: `Quote submitted for ${rfq.code} at ${currency || 'CNY'} ${unit_price}`
+
+  // Create tasks for invited suppliers
+  const invitations = db.findAll('rfq_invitations', { rfq_id: id });
+  invitations.forEach(inv => {
+    const supplierUsers = db.findAll('users', { org_id: inv.supplier_org_id });
+    supplierUsers.forEach(u => {
+      db.insert('tasks', {
+        assignee_user_id: u.id,
+        org_id: inv.supplier_org_id,
+        object_type: 'rfq',
+        object_id: id,
+        title: `Submit quote for ${rfq.rfq_no}: ${rfq.title}`,
+        status: 'open',
+        due_at: rfq.due_at
+      });
+    });
   });
-  // Notify buyer
-  db.insert('notifications', {
-    user_id: 'buyer',
-    title: 'New quote received',
-    message: `${req.user.name} submitted a quote for ${rfq.code}`,
-    type: 'info',
-    is_read: false,
-    related_type: 'rfq',
-    related_id: rfqId
+
+  res.json(updated);
+});
+
+// POST /api/rfqs/:id/award - Award RFQ
+router.post('/:id/award', requireRole('buyer', 'admin'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const rfq = db.findById('rfqs', id);
+  if (!rfq) return res.status(404).json({ error: 'RFQ not found' });
+
+  const { supplier_org_id, amount } = req.body;
+
+  const updated = db.update('rfqs', id, {
+    status: 'Award Pending',
+    award_supplier_id: supplier_org_id,
+    award_amount: amount
   });
+
+  // Create approval request
+  db.insert('approval_requests', {
+    object_type: 'rfq',
+    object_id: id,
+    status: 'pending',
+    current_step: 1,
+    submitted_by: req.user.userId,
+    submitted_at: new Date().toISOString(),
+    completed_at: null
+  });
+
+  // Create task for buyer approval
+  db.insert('tasks', {
+    assignee_user_id: 1,
+    org_id: 1,
+    object_type: 'rfq',
+    object_id: id,
+    title: `Approve award for ${rfq.rfq_no}: ${rfq.title}`,
+    status: 'open',
+    due_at: new Date(Date.now() + 3 * 86400000).toISOString()
+  });
+
+  res.json(updated);
+});
+
+// POST /api/rfqs/:id/approve-award - Approve award
+router.post('/:id/approve-award', requireRole('buyer', 'admin'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const rfq = db.findById('rfqs', id);
+  if (!rfq) return res.status(404).json({ error: 'RFQ not found' });
+
+  const updated = db.update('rfqs', id, { status: 'Award Approved' });
+
+  // Update approval request
+  const approval = db.findOne('approval_requests', { object_type: 'rfq', object_id: id });
+  if (approval) {
+    db.update('approval_requests', approval.id, { status: 'approved', completed_at: new Date().toISOString() });
+    db.insert('approval_actions', {
+      approval_id: approval.id,
+      action: 'approve',
+      actor_id: req.user.userId,
+      comments: req.body.comments || 'Award approved',
+      action_at: new Date().toISOString()
+    });
+  }
+
+  // Notify winning supplier
+  const supplierUsers = db.findAll('users', { org_id: rfq.award_supplier_id });
+  supplierUsers.forEach(u => {
+    db.insert('notifications', {
+      user_id: u.id,
+      title: 'Award approved',
+      message: `Congratulations! You have been awarded ${rfq.rfq_no}.`,
+      object_type: 'rfq',
+      object_id: id,
+      is_read: false
+    });
+  });
+
+  res.json(updated);
+});
+
+// POST /api/rfqs/:id/reject-award - Reject award
+router.post('/:id/reject-award', requireRole('buyer', 'admin'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const rfq = db.findById('rfqs', id);
+  if (!rfq) return res.status(404).json({ error: 'RFQ not found' });
+
+  const { reason } = req.body;
+  const updated = db.update('rfqs', id, {
+    status: 'Returned',
+    rejection_reason: reason,
+    revision_count: (rfq.revision_count || 0) + 1
+  });
+
+  const approval = db.findOne('approval_requests', { object_type: 'rfq', object_id: id });
+  if (approval) {
+    db.update('approval_requests', approval.id, { status: 'returned', completed_at: new Date().toISOString() });
+    db.insert('approval_actions', {
+      approval_id: approval.id,
+      action: 'return',
+      actor_id: req.user.userId,
+      comments: reason,
+      action_at: new Date().toISOString()
+    });
+  }
+
+  res.json(updated);
+});
+
+// POST /api/rfqs/:id/quote - Submit quote (supplier)
+router.post('/:id/quote', requireRole('supplier'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const rfq = db.findById('rfqs', id);
+  if (!rfq) return res.status(404).json({ error: 'RFQ not found' });
+
+  const myOrgId = req.user.orgId;
+  const invitation = db.findOne('rfq_invitations', { rfq_id: id, supplier_org_id: myOrgId });
+  if (!invitation) return res.status(403).json({ error: 'Not invited to this RFQ' });
+
+  const { total_amount, currency, lead_time, moq, validity_days, remarks, items } = req.body;
+
+  const quote = db.insert('quotes', {
+    rfq_id: id,
+    supplier_org_id: myOrgId,
+    status: 'submitted',
+    total_amount,
+    currency: currency || 'CNY',
+    lead_time,
+    moq,
+    validity_days: validity_days || 30,
+    remarks,
+    submitted_at: new Date().toISOString(),
+    revision_no: 1
+  });
+
+  if (items && items.length > 0) {
+    items.forEach(item => {
+      db.insert('quote_items', { quote_id: quote.id, ...item });
+    });
+  }
+
+  // Update invitation status
+  db.update('rfq_invitations', invitation.id, { status: 'quoted', responded_at: new Date().toISOString() });
+
   res.status(201).json(quote);
 });
 
-// Award RFQ
-router.post('/:id/award', requireRole('buyer', 'admin'), (req, res) => {
-  const rfqId = parseInt(req.params.id);
-  const { supplier_id } = req.body;
-  const rfq = db.update('rfqs', rfqId, { status: 'Awarded' });
-  if (!rfq) return res.status(404).json({ error: 'Not found' });
+// GET /api/rfqs/:id/compare - Quote comparison
+router.get('/:id/compare', requireRole('buyer', 'admin'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const rfq = db.findById('rfqs', id);
+  if (!rfq) return res.status(404).json({ error: 'RFQ not found' });
 
-  const supplier = db.findById('suppliers', supplier_id);
-  db.insert('history', {
-    user_id: req.user.username,
-    action: 'Awarded RFQ',
-    entity_type: 'rfq',
-    entity_id: rfqId,
-    details: `RFQ ${rfq.code} awarded to ${supplier ? supplier.name : 'supplier'}`
+  const items = db.findAll('rfq_items', { rfq_id: id });
+  const quotes = db.findAll('quotes', { rfq_id: id });
+
+  const enrichedQuotes = quotes.map(q => {
+    const org = db.findById('organizations', q.supplier_org_id);
+    const qItems = db.findAll('quote_items', { quote_id: q.id });
+    return {
+      ...q,
+      supplier_name: org ? org.short_name : null,
+      items: qItems
+    };
   });
-  // Notify winning supplier
-  if (supplier) {
-    const user = db.findOne('users', { name: supplier.name });
-    if (user) {
-      db.insert('notifications', {
-        user_id: user.username,
-        title: 'RFQ Awarded',
-        message: `Congratulations! You have been awarded ${rfq.code}`,
-        type: 'info',
-        is_read: false,
-        related_type: 'rfq',
-        related_id: rfqId
-      });
-    }
-  }
-  res.json(rfq);
+
+  res.json({ rfq, items, quotes: enrichedQuotes });
 });
 
 module.exports = router;

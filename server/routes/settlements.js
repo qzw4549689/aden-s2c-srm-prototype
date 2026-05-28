@@ -1,111 +1,272 @@
 const express = require('express');
 const db = require('../db');
-const { authMiddleware, requireRole } = require('../auth');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
-router.use(authMiddleware);
+router.use(authenticateToken);
 
+// GET /api/settlements - List settlements
 router.get('/', (req, res) => {
-  res.json(db.findAll('settlements'));
+  const { status, period, supplier_org_id } = req.query;
+  let settlements = db.findAll('settlements');
+
+  // Supplier: only see own settlements
+  if (req.user.role === 'supplier') {
+    settlements = settlements.filter(s => s.supplier_org_id === req.user.orgId);
+  }
+
+  if (status) settlements = settlements.filter(s => s.status === status);
+  if (period) settlements = settlements.filter(s => s.period === period);
+  if (supplier_org_id) settlements = settlements.filter(s => s.supplier_org_id === parseInt(supplier_org_id));
+
+  const enriched = settlements.map(s => {
+    const org = db.findById('organizations', s.supplier_org_id);
+    return { ...s, supplier_name: org ? org.short_name : null };
+  });
+
+  res.json(enriched);
 });
 
+// GET /api/settlements/:id - Get settlement detail with lines
 router.get('/:id', (req, res) => {
-  const s = db.findById('settlements', parseInt(req.params.id));
-  if (!s) return res.status(404).json({ error: 'Not found' });
-  const invoices = db.findAll('invoices', { settlement_id: s.id });
-  res.json({ ...s, invoices });
-});
-
-router.post('/', requireRole('buyer', 'admin'), (req, res) => {
-  const { code, supplier_id, type, status, amount, currency, numeric_amount, next_step } = req.body;
-  const supplier = supplier_id ? db.findById('suppliers', supplier_id) : null;
-  const settlement = db.insert('settlements', {
-    code: code || `STM-${new Date().toISOString().slice(2, 7).replace('-', '')}-${String(144 + db.findAll('settlements').length).padStart(3, '0')}`,
-    supplier_id, supplier_name: supplier ? supplier.name : '',
-    type: type || 'Monthly settlement', status: status || 'Draft',
-    amount, currency: currency || 'CNY', numeric_amount, next_step
-  });
-  db.insert('history', { user_id: req.user.username, action: 'Created settlement', entity_type: 'settlement', entity_id: settlement.id, details: `Settlement ${settlement.code} created` });
-  res.status(201).json(settlement);
-});
-
-router.put('/:id', requireRole('buyer', 'admin'), (req, res) => {
-  const settlement = db.update('settlements', parseInt(req.params.id), req.body);
-  if (!settlement) return res.status(404).json({ error: 'Not found' });
-  db.insert('history', { user_id: req.user.username, action: 'Updated settlement', entity_type: 'settlement', entity_id: settlement.id, details: `Settlement ${settlement.code} updated` });
-  res.json(settlement);
-});
-
-// Supplier confirms statement
-router.post('/:id/confirm', requireRole('supplier'), (req, res) => {
-  const settlement = db.update('settlements', parseInt(req.params.id), { status: 'Supplier confirmed', next_step: 'Ready for AP invoice' });
-  if (!settlement) return res.status(404).json({ error: 'Not found' });
-  db.insert('history', { user_id: req.user.username, action: 'Confirmed settlement', entity_type: 'settlement', entity_id: settlement.id, details: `Settlement ${settlement.code} confirmed by supplier` });
-  db.insert('notifications', {
-    user_id: 'buyer', title: 'Settlement Confirmed', message: `${req.user.name} confirmed ${settlement.code}`,
-    type: 'info', is_read: false, related_type: 'settlement', related_id: settlement.id
-  });
-  res.json(settlement);
-});
-
-// Supplier disputes statement
-router.post('/:id/dispute', requireRole('supplier'), (req, res) => {
-  const { reason } = req.body;
-  const settlement = db.update('settlements', parseInt(req.params.id), { status: 'Disputed', next_step: `Dispute: ${reason}` });
-  if (!settlement) return res.status(404).json({ error: 'Not found' });
-  db.insert('history', { user_id: req.user.username, action: 'Disputed settlement', entity_type: 'settlement', entity_id: settlement.id, details: `Settlement ${settlement.code} disputed: ${reason}` });
-  db.insert('notifications', {
-    user_id: 'buyer', title: 'Settlement Disputed', message: `${req.user.name} disputed ${settlement.code}: ${reason}`,
-    type: 'alert', is_read: false, related_type: 'settlement', related_id: settlement.id
-  });
-  res.json(settlement);
-});
-
-// Submit invoice
-router.post('/:id/invoices', requireRole('supplier'), (req, res) => {
-  const settlementId = parseInt(req.params.id);
-  const settlement = db.findById('settlements', settlementId);
+  const id = parseInt(req.params.id);
+  const settlement = db.findById('settlements', id);
   if (!settlement) return res.status(404).json({ error: 'Settlement not found' });
-  const { code, invoice_type, amount, tax_amount, ocr_status } = req.body;
+
+  const lines = db.findAll('settlement_lines', { settlement_id: id });
+  const invoices = db.findAll('invoices', { settlement_id: id });
+  const org = db.findById('organizations', settlement.supplier_org_id);
+
+  res.json({ ...settlement, supplier_name: org ? org.short_name : null, lines, invoices });
+});
+
+// POST /api/settlements - Create settlement (buyer)
+router.post('/', requireRole('buyer', 'admin'), (req, res) => {
+  const { supplier_org_id, period, lines } = req.body;
+
+  const count = db.findAll('settlements').length;
+  const stmNo = `STM-${period.slice(2, 4)}${period.slice(5, 7)}-${String(144 + count).padStart(3, '0')}`;
+
+  const settlement = db.insert('settlements', {
+    settlement_no: stmNo,
+    supplier_org_id,
+    period,
+    status: 'Published',
+    total_amount: 0,
+    dispute_amount: 0,
+    dispute_reason: null,
+    dispute_attachment: null,
+    created_by: req.user.userId,
+    published_at: new Date().toISOString(),
+    confirmed_at: null
+  });
+
+  let total = 0;
+  if (lines && lines.length > 0) {
+    lines.forEach(line => {
+      db.insert('settlement_lines', { settlement_id: settlement.id, ...line });
+      total += line.amount || 0;
+    });
+    db.update('settlements', settlement.id, { total_amount: total });
+  }
+
+  // Create task for supplier
+  const supplierUsers = db.findAll('users', { org_id: supplier_org_id });
+  supplierUsers.forEach(u => {
+    db.insert('tasks', {
+      assignee_user_id: u.id,
+      org_id: supplier_org_id,
+      object_type: 'settlement',
+      object_id: settlement.id,
+      title: `Confirm settlement ${stmNo} for ${period}`,
+      status: 'open',
+      due_at: new Date(Date.now() + 7 * 86400000).toISOString()
+    });
+
+    db.insert('notifications', {
+      user_id: u.id,
+      title: 'Settlement published',
+      message: `${stmNo} has been published for your confirmation.`,
+      object_type: 'settlement',
+      object_id: settlement.id,
+      is_read: false
+    });
+  });
+
+  res.status(201).json({ ...settlement, total_amount: total });
+});
+
+// POST /api/settlements/:id/confirm - Supplier confirms
+router.post('/:id/confirm', requireRole('supplier'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const settlement = db.findById('settlements', id);
+  if (!settlement) return res.status(404).json({ error: 'Settlement not found' });
+  if (settlement.supplier_org_id !== req.user.orgId) return res.status(403).json({ error: 'Not your settlement' });
+
+  const updated = db.update('settlements', id, {
+    status: 'Supplier Confirmed',
+    confirmed_at: new Date().toISOString()
+  });
+
+  res.json(updated);
+});
+
+// POST /api/settlements/:id/dispute - Supplier disputes
+router.post('/:id/dispute', requireRole('supplier'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const settlement = db.findById('settlements', id);
+  if (!settlement) return res.status(404).json({ error: 'Settlement not found' });
+  if (settlement.supplier_org_id !== req.user.orgId) return res.status(403).json({ error: 'Not your settlement' });
+
+  const { dispute_amount, dispute_reason, dispute_attachment } = req.body;
+
+  const updated = db.update('settlements', id, {
+    status: 'Disputed',
+    dispute_amount,
+    dispute_reason,
+    dispute_attachment
+  });
+
+  // Create task for buyer
+  db.insert('tasks', {
+    assignee_user_id: 1,
+    org_id: 1,
+    object_type: 'settlement',
+    object_id: id,
+    title: `Review dispute for ${settlement.settlement_no}`,
+    status: 'open',
+    due_at: new Date(Date.now() + 5 * 86400000).toISOString()
+  });
+
+  res.json(updated);
+});
+
+// POST /api/settlements/:id/approve - Buyer approves settlement
+router.post('/:id/approve', requireRole('buyer', 'admin'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const settlement = db.findById('settlements', id);
+  if (!settlement) return res.status(404).json({ error: 'Settlement not found' });
+
+  const updated = db.update('settlements', id, { status: 'Approved' });
+  res.json(updated);
+});
+
+// POST /api/settlements/:id/invoice - Submit invoice (supplier)
+router.post('/:id/invoice', requireRole('supplier'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const settlement = db.findById('settlements', id);
+  if (!settlement) return res.status(404).json({ error: 'Settlement not found' });
+  if (settlement.supplier_org_id !== req.user.orgId) return res.status(403).json({ error: 'Not your settlement' });
+
+  const { invoice_no, invoice_date, amount, tax_amount, tax_rate, currency, attachment } = req.body;
+
+  // Simulate OCR
+  const ocrStatuses = ['passed', 'passed', 'passed', 'exception'];
+  const ocrStatus = ocrStatuses[Math.floor(Math.random() * ocrStatuses.length)];
+
+  // Simulate verification
+  const verificationStatus = ocrStatus === 'passed' ? 'verified' : 'failed';
+
   const invoice = db.insert('invoices', {
-    code: code || `INV-${new Date().toISOString().slice(2, 7).replace('-', '')}-${String(89 + db.findAll('invoices').length).padStart(3, '0')}`,
-    settlement_id: settlementId, supplier_id: req.user.id,
-    invoice_type: invoice_type || 'VAT special invoice', amount, tax_amount,
-    ocr_status: ocr_status || 'Pending', status: 'Submitted'
+    settlement_id: id,
+    invoice_no,
+    invoice_date,
+    amount,
+    tax_amount,
+    tax_rate: tax_rate || 0.06,
+    currency: currency || 'CNY',
+    ocr_status: ocrStatus,
+    verification_status: verificationStatus,
+    status: verificationStatus === 'verified' ? 'Under Review' : 'Returned',
+    attachment,
+    rejection_reason: verificationStatus === 'failed' ? 'OCR verification failed' : null,
+    submitted_at: new Date().toISOString(),
+    approved_at: null
   });
-  db.update('settlements', settlementId, { status: 'Invoice submitted', next_step: 'OCR verification pending' });
-  db.insert('history', { user_id: req.user.username, action: 'Submitted invoice', entity_type: 'invoice', entity_id: invoice.id, details: `Invoice ${invoice.code} submitted for ${settlement.code}` });
-  db.insert('notifications', {
-    user_id: 'buyer', title: 'Invoice Submitted', message: `${req.user.name} submitted invoice ${invoice.code}`,
-    type: 'info', is_read: false, related_type: 'settlement', related_id: settlementId
-  });
+
+  // Update settlement status
+  db.update('settlements', id, { status: 'Invoice Submitted' });
+
+  // Create task for buyer if passed
+  if (ocrStatus === 'passed') {
+    db.insert('tasks', {
+      assignee_user_id: 1,
+      org_id: 1,
+      object_type: 'invoice',
+      object_id: invoice.id,
+      title: `Approve invoice ${invoice_no}`,
+      status: 'open',
+      due_at: new Date(Date.now() + 3 * 86400000).toISOString()
+    });
+  } else {
+    // Create task for supplier to resubmit
+    db.insert('tasks', {
+      assignee_user_id: req.user.userId,
+      org_id: req.user.orgId,
+      object_type: 'invoice',
+      object_id: invoice.id,
+      title: `Resubmit invoice ${invoice_no} (OCR failed)`,
+      status: 'open',
+      due_at: new Date(Date.now() + 3 * 86400000).toISOString()
+    });
+  }
+
   res.status(201).json(invoice);
 });
 
-// Buyer approves invoice
+// POST /api/settlements/invoices/:id/approve - Approve invoice
 router.post('/invoices/:id/approve', requireRole('buyer', 'admin'), (req, res) => {
-  const invoice = db.update('invoices', parseInt(req.params.id), { status: 'Approved', ocr_status: 'Passed' });
-  if (!invoice) return res.status(404).json({ error: 'Not found' });
-  db.update('settlements', invoice.settlement_id, { status: 'Approved', next_step: 'Send to D365 AP' });
-  db.insert('history', { user_id: req.user.username, action: 'Approved invoice', entity_type: 'invoice', entity_id: invoice.id, details: `Invoice ${invoice.code} approved` });
-  res.json(invoice);
+  const id = parseInt(req.params.id);
+  const invoice = db.findById('invoices', id);
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+  const updated = db.update('invoices', id, {
+    status: 'Approved',
+    approved_at: new Date().toISOString()
+  });
+
+  res.json(updated);
 });
 
-// Buyer rejects invoice (return for correction)
+// POST /api/settlements/invoices/:id/reject - Reject invoice
 router.post('/invoices/:id/reject', requireRole('buyer', 'admin'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const invoice = db.findById('invoices', id);
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
   const { reason } = req.body;
-  const invoice = db.update('invoices', parseInt(req.params.id), { status: 'Rejected', ocr_status: 'Exception' });
-  if (!invoice) return res.status(404).json({ error: 'Not found' });
-  db.update('settlements', invoice.settlement_id, { status: 'Exception', next_step: `Return for correction: ${reason}` });
-  db.insert('history', { user_id: req.user.username, action: 'Rejected invoice', entity_type: 'invoice', entity_id: invoice.id, details: `Invoice ${invoice.code} rejected: ${reason}` });
-  const supplier = db.findById('users', invoice.supplier_id);
-  if (supplier) {
-    db.insert('notifications', {
-      user_id: supplier.username, title: 'Invoice Rejected', message: `Invoice ${invoice.code} was rejected: ${reason}`,
-      type: 'alert', is_read: false, related_type: 'invoice', related_id: invoice.id
+  const updated = db.update('invoices', id, {
+    status: 'Returned',
+    rejection_reason: reason
+  });
+
+  // Create task for supplier
+  const settlement = db.findById('settlements', invoice.settlement_id);
+  if (settlement) {
+    const supplierUsers = db.findAll('users', { org_id: settlement.supplier_org_id });
+    supplierUsers.forEach(u => {
+      db.insert('tasks', {
+        assignee_user_id: u.id,
+        org_id: settlement.supplier_org_id,
+        object_type: 'invoice',
+        object_id: id,
+        title: `Resubmit invoice ${invoice.invoice_no} (${reason})`,
+        status: 'open',
+        due_at: new Date(Date.now() + 3 * 86400000).toISOString()
+      });
+
+      db.insert('notifications', {
+        user_id: u.id,
+        title: 'Invoice returned',
+        message: `Invoice ${invoice.invoice_no} has been returned: ${reason}.`,
+        object_type: 'invoice',
+        object_id: id,
+        is_read: false
+      });
     });
   }
-  res.json(invoice);
+
+  res.json(updated);
 });
 
 module.exports = router;

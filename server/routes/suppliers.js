@@ -1,75 +1,199 @@
 const express = require('express');
 const db = require('../db');
-const { authMiddleware, requireRole } = require('../auth');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.use(authMiddleware);
+// All routes require auth
+router.use(authenticateToken);
 
-// List all suppliers
+// GET /api/suppliers - List suppliers
 router.get('/', (req, res) => {
-  const suppliers = db.findAll('suppliers');
-  res.json(suppliers);
-});
+  const { status, category, search } = req.query;
+  let suppliers = db.findAll('supplier_profiles');
 
-// Get single supplier
-router.get('/:id', (req, res) => {
-  const supplier = db.findById('suppliers', parseInt(req.params.id));
-  if (!supplier) return res.status(404).json({ error: 'Not found' });
-  res.json(supplier);
-});
-
-// Create supplier (buyer/admin only)
-router.post('/', requireRole('buyer', 'admin'), (req, res) => {
-  const { code, name, category, status, score, location, integration_status, tax_number, contact, bank_account } = req.body;
-  const supplier = db.insert('suppliers', {
-    code: code || `SUP-${Date.now()}`,
-    name, category, status: status || 'Potential', score: score || 0,
-    location, integration_status: integration_status || 'Not synced',
-    tax_number, contact, bank_account
-  });
-  db.insert('history', {
-    user_id: req.user.username,
-    action: 'Created supplier',
-    entity_type: 'supplier',
-    entity_id: supplier.id,
-    details: `Supplier ${supplier.name} created with status ${supplier.status}`
-  });
-  res.status(201).json(supplier);
-});
-
-// Update supplier
-router.put('/:id', requireRole('buyer', 'admin'), (req, res) => {
-  const updates = req.body;
-  const supplier = db.update('suppliers', parseInt(req.params.id), updates);
-  if (!supplier) return res.status(404).json({ error: 'Not found' });
-  db.insert('history', {
-    user_id: req.user.username,
-    action: 'Updated supplier',
-    entity_type: 'supplier',
-    entity_id: supplier.id,
-    details: `Supplier ${supplier.name} updated` + (updates.status ? `, status changed to ${updates.status}` : '')
-  });
-  res.json(supplier);
-});
-
-// Update supplier status (lifecycle)
-router.patch('/:id/status', requireRole('buyer', 'admin'), (req, res) => {
-  const { status } = req.body;
-  const validStatuses = ['Potential', 'Registration', 'Qualification', 'Trial', 'Qualified', 'Blacklisted'];
-  if (!validStatuses.includes(status)) {
-    return res.status(400).json({ error: 'Invalid status' });
+  if (status) suppliers = suppliers.filter(s => s.qualification_status === status);
+  if (category) suppliers = suppliers.filter(s => s.category === category);
+  if (search) {
+    const q = search.toLowerCase();
+    suppliers = suppliers.filter(s => {
+      const org = db.findById('organizations', s.org_id);
+      return (org && org.short_name.toLowerCase().includes(q)) ||
+             (s.contact_name && s.contact_name.toLowerCase().includes(q)) ||
+             (s.contact_email && s.contact_email.toLowerCase().includes(q));
+    });
   }
-  const supplier = db.update('suppliers', parseInt(req.params.id), { status });
-  if (!supplier) return res.status(404).json({ error: 'Not found' });
-  db.insert('history', {
-    user_id: req.user.username,
-    action: 'Status changed',
-    entity_type: 'supplier',
-    entity_id: supplier.id,
-    details: `Supplier ${supplier.name} status changed to ${status}`
+
+  const enriched = suppliers.map(s => {
+    const org = db.findById('organizations', s.org_id);
+    return { ...s, org_name: org ? org.short_name : null, org_type: org ? org.type : null };
   });
-  res.json(supplier);
+
+  res.json(enriched);
+});
+
+// GET /api/suppliers/:id - Get supplier detail
+router.get('/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  const profile = db.findById('supplier_profiles', id);
+  if (!profile) return res.status(404).json({ error: 'Supplier not found' });
+  const org = db.findById('organizations', profile.org_id);
+  res.json({ ...profile, org_name: org ? org.short_name : null });
+});
+
+// POST /api/suppliers - Create supplier (buyer/admin only)
+router.post('/', requireRole('buyer', 'admin'), (req, res) => {
+  const { org_name, category, contact_name, contact_phone, contact_email, business_license_no, tax_certificate_no, food_safety_cert_no, bank_name, bank_account, bank_branch, address } = req.body;
+
+  const org = db.insert('organizations', {
+    type: 'supplier',
+    legal_name: org_name,
+    short_name: org_name,
+    tax_no: tax_certificate_no,
+    bank_account,
+    bank_name,
+    address,
+    status: 'active'
+  });
+
+  const profile = db.insert('supplier_profiles', {
+    org_id: org.id,
+    category,
+    qualification_status: 'Draft',
+    score: 0,
+    service_area: address,
+    contact_name,
+    contact_phone,
+    contact_email,
+    business_license_no,
+    tax_certificate_no,
+    food_safety_cert_no,
+    bank_name,
+    bank_account,
+    bank_branch,
+    submitted_at: null,
+    approved_at: null,
+    rejected_at: null,
+    rejection_reason: null,
+    version: 1,
+    created_by: req.user.userId,
+    updated_by: req.user.userId
+  });
+
+  res.status(201).json({ ...profile, org_name });
+});
+
+// PUT /api/suppliers/:id - Update supplier profile
+router.put('/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  const profile = db.findById('supplier_profiles', id);
+  if (!profile) return res.status(404).json({ error: 'Supplier not found' });
+
+  // Suppliers can only edit their own profile
+  if (req.user.role === 'supplier' && profile.org_id !== req.user.orgId) {
+    return res.status(403).json({ error: 'Can only edit own profile' });
+  }
+
+  const updates = req.body;
+  delete updates.id;
+  delete updates.created_at;
+
+  const updated = db.update('supplier_profiles', id, { ...updates, updated_by: req.user.userId });
+  res.json(updated);
+});
+
+// POST /api/suppliers/:id/submit - Submit for approval
+router.post('/:id/submit', requireRole('supplier'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const profile = db.findById('supplier_profiles', id);
+  if (!profile) return res.status(404).json({ error: 'Supplier not found' });
+  if (profile.org_id !== req.user.orgId) return res.status(403).json({ error: 'Can only submit own profile' });
+
+  const updated = db.update('supplier_profiles', id, {
+    qualification_status: 'Buyer Review',
+    submitted_at: new Date().toISOString()
+  });
+
+  // Create approval request
+  db.insert('approval_requests', {
+    object_type: 'onboarding',
+    object_id: id,
+    status: 'pending',
+    current_step: 1,
+    submitted_by: req.user.userId,
+    submitted_at: new Date().toISOString(),
+    completed_at: null
+  });
+
+  // Create task for buyer
+  db.insert('tasks', {
+    assignee_user_id: 1,
+    org_id: 1,
+    object_type: 'onboarding',
+    object_id: id,
+    title: `Review supplier onboarding: ${updated.short_name || 'New Supplier'}`,
+    status: 'open',
+    due_at: new Date(Date.now() + 7 * 86400000).toISOString()
+  });
+
+  res.json(updated);
+});
+
+// POST /api/suppliers/:id/approve - Approve supplier
+router.post('/:id/approve', requireRole('buyer', 'admin'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const profile = db.findById('supplier_profiles', id);
+  if (!profile) return res.status(404).json({ error: 'Supplier not found' });
+
+  const { score } = req.body;
+  const updated = db.update('supplier_profiles', id, {
+    qualification_status: 'Approved',
+    score: score || profile.score || 80,
+    approved_at: new Date().toISOString()
+  });
+
+  // Update approval request
+  const approval = db.findOne('approval_requests', { object_type: 'onboarding', object_id: id });
+  if (approval) {
+    db.update('approval_requests', approval.id, { status: 'approved', completed_at: new Date().toISOString() });
+    db.insert('approval_actions', {
+      approval_id: approval.id,
+      action: 'approve',
+      actor_id: req.user.userId,
+      comments: req.body.comments || 'Approved',
+      action_at: new Date().toISOString()
+    });
+  }
+
+  res.json(updated);
+});
+
+// POST /api/suppliers/:id/reject - Reject supplier
+router.post('/:id/reject', requireRole('buyer', 'admin'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const profile = db.findById('supplier_profiles', id);
+  if (!profile) return res.status(404).json({ error: 'Supplier not found' });
+
+  const { reason } = req.body;
+  const updated = db.update('supplier_profiles', id, {
+    qualification_status: 'Rejected',
+    rejected_at: new Date().toISOString(),
+    rejection_reason: reason
+  });
+
+  const approval = db.findOne('approval_requests', { object_type: 'onboarding', object_id: id });
+  if (approval) {
+    db.update('approval_requests', approval.id, { status: 'rejected', completed_at: new Date().toISOString() });
+    db.insert('approval_actions', {
+      approval_id: approval.id,
+      action: 'reject',
+      actor_id: req.user.userId,
+      comments: reason,
+      action_at: new Date().toISOString()
+    });
+  }
+
+  res.json(updated);
 });
 
 module.exports = router;

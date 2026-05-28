@@ -7,7 +7,7 @@ class InMemoryDB {
     this.sequences = {};
   }
 
-  _ensureTable(name, schema) {
+  _ensureTable(name) {
     if (!this.tables[name]) {
       this.tables[name] = [];
       this.sequences[name] = 1;

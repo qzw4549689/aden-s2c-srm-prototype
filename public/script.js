@@ -114,7 +114,7 @@ function badgeClass(status) {
   if (value.includes("active") || value.includes("qualified") || value.includes("confirmed") || value.includes("passed") || value.includes("open") || value.includes("approved")) return "green";
   if (value.includes("review") || value.includes("approval") || value.includes("signature") || value.includes("pending") || value.includes("planned") || value.includes("soon")) return "orange";
   if (value.includes("draft") || value.includes("trial") || value.includes("potential") || value.includes("design")) return "blue";
-  if (value.includes("exception") || value.includes("expiry") || value.includes("hold") || value.includes("mismatch") || value.includes("overdue") || value.includes("rejected") || value.includes("disputed")) return "red";
+  if (value.includes("exception") || value.includes("expiry") || value.includes("hold") || value.includes("mismatch") || value.includes("overdue") || value.includes("rejected") || value.includes("disputed") || value.includes("returned")) return "red";
   return "gray";
 }
 
@@ -153,7 +153,7 @@ function table(headers, rows, type) {
           <tr data-record="${row[0] || row.id}" data-type="${type}">
             ${row.map((cell, index) => {
               if (index === 0) return `<td><div class="record-title">${cell}</div><div class="record-sub">Click to open details</div></td>`;
-              if (index === 3 || String(cell).match(/Qualified|Trial|Potential|Open|Draft|review|approval|Signature|Active|Confirmed|planned|Passed|Exception|Expiry|Approved|Rejected|Disputed|Shipped|Preparing/i)) {
+              if (index === 3 || String(cell).match(/Qualified|Trial|Potential|Open|Draft|review|approval|Signature|Active|Confirmed|planned|Passed|Exception|Expiry|Approved|Rejected|Disputed|Shipped|Preparing|Returned|Buyer Review|Award Pending|Award Approved|Partially Confirmed|Change Requested|Invoice Submitted|Supplier Confirmed/i)) {
                 return `<td><span class="badge ${badgeClass(cell)}">${cell}</span></td>`;
               }
               return `<td>${cell}</td>`;
@@ -193,18 +193,37 @@ function timeline(who, text, time) {
   return `<div class="timeline-item"><i></i><div><strong>${who}</strong><span>${text}<br>${time}</span></div></div>`;
 }
 
+function formatDate(dateStr) {
+  if (!dateStr) return 'N/A';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatCurrency(amount, currency = 'CNY') {
+  if (amount === null || amount === undefined) return '-';
+  return `${currency} ${Number(amount).toLocaleString()}`;
+}
+
 // ===================== BUYER PAGES =====================
 
 async function commandPage() {
   try {
-    const data = await api('/dashboard/buyer');
+    const data = await api('/dashboard');
     const k = data.kpi || {};
+    const isBuyer = data.role === 'buyer';
     return `
       <div class="grid-4">
-        ${kpi("Active RFx events", k.active_rfx || 0, "Events requiring attention", 72)}
-        ${kpi("Qualified suppliers", k.qualified_suppliers || 0, "Food supplier references", 88)}
-        ${kpi("Expiring contracts", k.expiring_contracts || 0, "Expiry alerts routed", 48)}
-        ${kpi("Pending tasks", k.pending_tasks || 0, "Tasks assigned to you", 64)}
+        ${isBuyer ? `
+          ${kpi("Active RFx events", k.active_rfqs || 0, "Events requiring attention", 72)}
+          ${kpi("Pending Awards", k.pending_awards || 0, "Award approval pending", 88)}
+          ${kpi("Pending POs", k.pending_pos || 0, "Awaiting supplier confirmation", 48)}
+          ${kpi("Pending Tasks", k.pending_tasks || 0, "Tasks assigned to you", 64)}
+        ` : `
+          ${kpi("Open Invitations", k.open_rfqs || 0, "RFQ opportunities", 64)}
+          ${kpi("POs to Confirm", k.pending_pos || 0, "Confirm quantity and delivery", 52)}
+          ${kpi("Statements", k.pending_settlements || 0, "Monthly billing settlement", 40)}
+          ${kpi("Pending Tasks", k.pending_tasks || 0, "Tasks requiring your action", 72)}
+        `}
       </div>
       ${panel("End-to-end S2C operating flow", workflow([
         ["Spend & demand", "Category demand and purchase needs are consolidated before sourcing."],
@@ -215,7 +234,7 @@ async function commandPage() {
       ]))}
       <div class="split">
         ${panel("Current sourcing pipeline", table(["Record", "Scope", "Status", "Suppliers", "Due date", "Round"],
-          (data.rfqs || []).map(r => [r.code, r.scope, r.status, r.suppliers_count, r.due_date, r.round]), "rfq"))}
+          (data.recent_rfqs || []).map(r => [r.rfq_no, r.title, r.status, '-', formatDate(r.due_at), '-']), "rfq"))}
         ${panel("Control focus", `
           <div class="cards-list">
             <div class="mini-card"><div><strong>Portal-based supplier participation</strong><p>External suppliers use portal workflows for registration, quotation, bidding, PO confirmation and settlement tasks.</p></div><span class="badge green">Access</span></div>
@@ -242,8 +261,8 @@ async function suppliersPage() {
         ["Ongoing control", "Review, correction, blacklist, elimination and re-qualification are managed."]
       ]))}
       <div class="split">
-        ${panel("Supplier master list", table(["Supplier ID", "Supplier", "Category", "Status", "Score", "Location", "Integration"],
-          suppliers.map(s => [s.code, s.name, s.category, s.status, s.score, s.location, s.integration_status]), "supplier"),
+        ${panel("Supplier master list", table(["Supplier ID", "Supplier", "Category", "Status", "Score", "Location", "Contact"],
+          suppliers.map(s => [s.id, s.org_name || s.short_name, s.category, s.qualification_status, s.score, s.service_area, s.contact_name]), "supplier"),
           `<button class="secondary-btn" data-open="supplier" type="button">Add supplier</button>`)}
         ${panel("Qualification checklist", `
           <div class="cards-list">
@@ -263,13 +282,20 @@ async function suppliersPage() {
 async function sourcingPage() {
   try {
     const rfqs = await api('/rfqs');
+    const tabItems = [["all", "All RFQs"], ["Draft", "Draft"], ["Published", "Open"], ["Comparison", "Comparison"], ["Award", "Award"]];
+    let filtered = rfqs;
+    if (state.tab !== 'all') {
+      if (state.tab === 'Award') filtered = rfqs.filter(r => r.status === 'Award Pending' || r.status === 'Award Approved');
+      else if (state.tab === 'Comparison') filtered = rfqs.filter(r => r.status === 'Comparison');
+      else filtered = rfqs.filter(r => r.status === state.tab);
+    }
     return `
       <div class="split">
         ${panel("RFQ workbench", `
-          ${tabs([["all", "All RFQs"], ["draft", "Draft"], ["open", "Open"], ["compare", "Comparison"], ["award", "Award approval"]], state.tab)}
+          ${tabs(tabItems, state.tab)}
           <div class="spacer"></div>
-          ${table(["RFQ", "Scope", "Status", "Suppliers", "Due date", "Round"],
-            rfqs.map(r => [r.code, r.scope, r.status, r.suppliers_count, r.due_date, r.round]), "rfq")}
+          ${table(["RFQ", "Scope", "Status", "Category", "Due date", "Award"],
+            filtered.map(r => [r.rfq_no, r.title, r.status, r.category, formatDate(r.due_at), r.award_supplier_id ? 'Yes' : '-']), "rfq")}
         `, `<button class="secondary-btn" data-open="rfq" type="button">New RFQ</button>`)}
         ${panel("Create RFQ", `
           <div class="form-grid">
@@ -292,6 +318,9 @@ async function sourcingPage() {
           <div class="compare-card"><span>FreshFarm Distribution</span><strong>CNY 184,260</strong><p>Strong delivery reliability. Commercial rank 2.</p></div>
           <div class="compare-card"><span>Jixiang Wonton Food Supply</span><strong>CNY 191,800</strong><p>Preferred frozen-food reference supplier. Commercial rank 3.</p></div>
         </div>
+        <div class="drawer-actions page-actions">
+          <button class="secondary-btn" data-action="view-comparison" type="button">View Full Comparison</button>
+        </div>
       `)}
     `;
   } catch (e) {
@@ -301,7 +330,6 @@ async function sourcingPage() {
 
 async function tenderPage() {
   try {
-    const auctions = await api('/dashboard/buyer').then(d => d.auctions || []);
     return `
       ${panel("Tender, clarification and online auction flow", workflow([
         ["Tender notice", "Public or invited tender is published with qualification rules and schedule."],
@@ -338,11 +366,10 @@ async function tenderPage() {
 async function contractsPage() {
   try {
     const contracts = await api('/contracts');
-    const prices = await api('/contracts/prices');
     return `
       <div class="split">
-        ${panel("Contract repository", table(["Contract", "Supplier", "Type", "Status", "Valid until", "Price status"],
-          contracts.map(c => [c.code, c.supplier_name, c.type, c.status, c.valid_until, c.price_status]), "contract"),
+        ${panel("Contract repository", table(["Contract", "Supplier", "Type", "Status", "Valid until", "Amount"],
+          contracts.map(c => [c.contract_no || c.id, c.supplier_name || '-', c.type || 'Supply', c.status, formatDate(c.end_date), formatCurrency(c.amount, c.currency)]), "contract"),
           `<button class="secondary-btn" data-open="contract" type="button">New contract</button>`)}
         ${panel("Contract drafting", `
           <div class="form-grid">
@@ -355,10 +382,6 @@ async function contractsPage() {
           </div>
         `)}
       </div>
-      ${panel("Price library and D365 catalog integration", `
-        ${table(["Price item", "Supplier", "Category", "Status", "Unit price", "ERP action"],
-          prices.map(p => [p.code, p.supplier_name, p.category, p.status, p.unit_price, p.erp_action]), "price")}
-      `)}
     `;
   } catch (e) {
     return `<div class="empty">Error: ${e.message}</div>`;
@@ -378,10 +401,10 @@ async function collaborationPage() {
         ["Settlement", "Monthly statement is confirmed before original invoice submission."]
       ]))}
       <div class="split">
-        ${panel("PO and delivery collaboration", table(["PO", "Supplier", "Status", "Delivery date", "ASN", "Next step"],
-          orders.map(o => [o.code, o.supplier_name, o.status, o.delivery_date, o.asn_count, o.next_step]), "order"))}
-        ${panel("Settlement and invoice readiness", table(["Record", "Supplier", "Type", "Status", "Amount", "Next step"],
-          settlements.map(s => [s.code, s.supplier_name, s.type, s.status, s.amount, s.next_step]), "settlement"))}
+        ${panel("PO and delivery collaboration", table(["PO", "Supplier", "Status", "Delivery date", "Amount", "Next step"],
+          orders.map(o => [o.po_no, o.supplier_name || '-', o.status, formatDate(o.delivery_date), formatCurrency(o.total_amount, o.currency), o.status === 'Pending Supplier' ? 'Confirm' : o.status === 'Change Requested' ? 'Review change' : 'Track']), "order"))}
+        ${panel("Settlement and invoice readiness", table(["Record", "Supplier", "Period", "Status", "Amount", "Next step"],
+          settlements.map(s => [s.settlement_no, s.supplier_name || '-', s.period, s.status, formatCurrency(s.total_amount, 'CNY'), s.status === 'Published' ? 'Confirm' : s.status === 'Disputed' ? 'Review dispute' : 'Approve']), "settlement"))}
       </div>
     `;
   } catch (e) {
@@ -391,7 +414,6 @@ async function collaborationPage() {
 
 async function performancePage() {
   try {
-    const capas = await api('/dashboard/buyer').then(d => d.capas || []);
     return `
       <div class="grid-3">
         ${kpi("Average supplier score", "87.4", "Quality, delivery, service and compliance weighted score", 86)}
@@ -422,7 +444,7 @@ async function performancePage() {
 
 async function adminPage() {
   try {
-    const configs = await api('/admin/config');
+    const configs = await api('/admin/configs');
     return `
       ${panel("Integration and control architecture", `
         <div class="integration-map">
@@ -457,9 +479,9 @@ async function adminPage() {
             ${configs.map(c => `
               <tr>
                 <td>${c.key}</td>
-                <td><input value="${c.value}" data-config-id="${c.id}" class="config-input" /></td>
+                <td><input value="${JSON.parse(c.value_json || '{}').value || ''}" data-config-key="${c.key}" class="config-input" /></td>
                 <td>${c.category}</td>
-                <td><button class="secondary-btn config-save" data-config-id="${c.id}" type="button">Save</button></td>
+                <td><button class="secondary-btn config-save" data-config-key="${c.key}" type="button">Save</button></td>
               </tr>
             `).join('')}
           </tbody>
@@ -475,20 +497,20 @@ async function adminPage() {
 
 async function supplierHomePage() {
   try {
-    const data = await api('/dashboard/supplier');
+    const data = await api('/dashboard');
     const k = data.kpi || {};
     return `
       <div class="grid-4">
-        ${kpi("Open invitations", k.open_invitations || 0, "RFQ, tender and auction opportunities", 64)}
-        ${kpi("POs to confirm", k.pos_to_confirm || 0, "Confirm quantity and delivery window", 52)}
-        ${kpi("Statements to approve", k.statements_to_approve || 0, "Monthly billing settlement", 40)}
+        ${kpi("Open invitations", k.open_rfqs || 0, "RFQ, tender and auction opportunities", 64)}
+        ${kpi("POs to confirm", k.pending_pos || 0, "Confirm quantity and delivery window", 52)}
+        ${kpi("Statements to approve", k.pending_settlements || 0, "Monthly billing settlement", 40)}
         ${kpi("Pending tasks", k.pending_tasks || 0, "Tasks requiring your action", 72)}
       </div>
       <div class="split">
         ${panel("Priority task list", `
           <div class="cards-list">
-            ${(data.tasks || []).slice(0, 5).map(t => `
-              <div class="mini-card"><div><strong>${t.title}</strong><p>Due: ${t.due_date || 'N/A'}</p></div><span class="badge ${badgeClass(t.priority === 'high' ? 'Due soon' : 'Action')}">${t.priority}</span></div>
+            ${(data.recent_pos || []).slice(0, 5).map(o => `
+              <div class="mini-card"><div><strong>${o.po_no}</strong><p>Status: ${o.status} | Due: ${formatDate(o.delivery_date)}</p></div><span class="badge ${badgeClass(o.status)}">${o.status}</span></div>
             `).join('') || '<div class="empty">No pending tasks</div>'}
           </div>
         `)}
@@ -509,41 +531,47 @@ async function supplierHomePage() {
 }
 
 async function profilePage() {
-  return `
-    <div class="split">
-      ${panel("Company profile", `
-        <div class="form-grid">
-          ${field("Legal entity", currentUser?.name || "SuXin Food Co., Ltd.")}
-          ${field("Supplier category", "Prepared food", "select")}
-          ${field("Tax registration number", "9132************")}
-          ${field("Primary contact", "Linda Chen")}
-          ${field("Bank account", "**** **** **** 8128")}
-          ${field("Delivery coverage", "Shanghai, Jiangsu, Zhejiang", "textarea")}
-        </div>
-        <div class="drawer-actions page-actions">
-          <button class="primary-btn" data-action="update-profile" type="button">Submit update</button>
-          <button class="secondary-btn" type="button">Save draft</button>
-        </div>
-      `)}
-      ${panel("Qualification status", `
-        <div class="cards-list">
-          <div class="mini-card"><div><strong>Business license</strong><p>Valid until 2030-12-31</p></div><span class="badge green">Approved</span></div>
-          <div class="mini-card"><div><strong>Food safety certificate</strong><p>Renewal reminder configured.</p></div><span class="badge orange">Expires soon</span></div>
-          <div class="mini-card"><div><strong>Bank profile</strong><p>Last buyer approval: 2026-04-18</p></div><span class="badge green">Approved</span></div>
-          <div class="mini-card"><div><strong>Site audit</strong><p>Last score: 91 / 100</p></div><span class="badge green">Passed</span></div>
-        </div>
-      `)}
-    </div>
-  `;
+  try {
+    const profile = await api('/suppliers');
+    const myProfile = profile.find(p => p.org_id === currentUser.orgId) || profile[0];
+    return `
+      <div class="split">
+        ${panel("Company profile", `
+          <div class="form-grid">
+            ${field("Legal entity", myProfile.org_name || "SuXin Food Co., Ltd.")}
+            ${field("Supplier category", myProfile.category || "Prepared food", "select")}
+            ${field("Tax registration number", myProfile.tax_certificate_no || "9132************")}
+            ${field("Primary contact", myProfile.contact_name || "Linda Chen")}
+            ${field("Bank account", myProfile.bank_account || "**** **** **** 8128")}
+            ${field("Delivery coverage", myProfile.service_area || "Shanghai, Jiangsu, Zhejiang", "textarea")}
+          </div>
+          <div class="drawer-actions page-actions">
+            <button class="primary-btn" data-action="update-profile" type="button">Submit update</button>
+            <button class="secondary-btn" type="button">Save draft</button>
+          </div>
+        `)}
+        ${panel("Qualification status", `
+          <div class="cards-list">
+            <div class="mini-card"><div><strong>Business license</strong><p>${myProfile.business_license_no ? 'Valid: ' + myProfile.business_license_no : 'Not submitted'}</p></div><span class="badge ${myProfile.business_license_no ? 'green' : 'red'}">${myProfile.business_license_no ? 'Approved' : 'Missing'}</span></div>
+            <div class="mini-card"><div><strong>Food safety certificate</strong><p>${myProfile.food_safety_cert_no ? 'Cert: ' + myProfile.food_safety_cert_no : 'Not submitted'}</p></div><span class="badge ${myProfile.food_safety_cert_no ? 'green' : 'orange'}">${myProfile.food_safety_cert_no ? 'Approved' : 'Expires soon'}</span></div>
+            <div class="mini-card"><div><strong>Bank profile</strong><p>Last buyer approval: ${formatDate(myProfile.approved_at)}</p></div><span class="badge ${myProfile.bank_account ? 'green' : 'red'}">${myProfile.bank_account ? 'Approved' : 'Missing'}</span></div>
+            <div class="mini-card"><div><strong>Qualification status</strong><p>Score: ${myProfile.score || 0} / 100</p></div><span class="badge ${badgeClass(myProfile.qualification_status)}">${myProfile.qualification_status}</span></div>
+          </div>
+        `)}
+      </div>
+    `;
+  } catch (e) {
+    return `<div class="empty">Error: ${e.message}</div>`;
+  }
 }
 
 async function opportunitiesPage() {
   try {
-    const data = await api('/dashboard/supplier');
+    const rfqs = await api('/rfqs');
     return `
       <div class="split">
-        ${panel("Available opportunities", table(["Event", "Scope", "Status", "Buyer", "Due date", "Round"],
-          (data.opportunities || []).map(o => [o.code, o.scope, o.status, o.buyer, o.due_date, o.round]), "opportunity"))}
+        ${panel("Available opportunities", table(["Event", "Scope", "Status", "Category", "Due date", "Action"],
+          rfqs.map(o => [o.rfq_no, o.title, o.status, o.category, formatDate(o.due_at), o.my_invitation_status === 'pending' ? 'Accept' : 'Quote']), "opportunity"))}
         ${panel("Quotation response", `
           <div class="form-grid">
             ${field("Unit price", "18.40")}
@@ -595,6 +623,7 @@ async function biddingPage() {
 async function ordersPage() {
   try {
     const orders = await api('/orders');
+    const asns = await api('/orders/asns/list');
     return `
       ${panel("PO confirmation and delivery collaboration", workflow([
         ["PO received", "Review D365 formal PO exposed in the supplier portal."],
@@ -604,11 +633,11 @@ async function ordersPage() {
         ["Reconcile", "Accepted receipts are included in monthly settlement statement."]
       ]))}
       <div class="split">
-        ${panel("PO list", table(["PO", "Buyer", "Status", "Delivery date", "ASN", "Next step"],
-          orders.map(o => [o.code, "Aden Procurement", o.status, o.delivery_date, o.asn_count, o.next_step]), "order"))}
+        ${panel("PO list", table(["PO", "Buyer", "Status", "Delivery date", "Amount", "Next step"],
+          orders.map(o => [o.po_no, "Aden Procurement", o.status, formatDate(o.delivery_date), formatCurrency(o.total_amount, o.currency), o.status === 'Pending Supplier' ? 'Confirm' : o.status === 'Change Requested' ? 'Review change' : 'Track']), "order"))}
         ${panel("Create ASN", `
           <div class="form-grid">
-            ${field("PO number", "PO-45001292")}
+            ${field("PO number", orders[0]?.po_no || "PO-45001292")}
             ${field("Shipment date", "2026-06-05")}
             ${field("Carrier", "SF Express cold chain")}
             ${field("Vehicle / tracking", "SH-A8128")}
@@ -621,6 +650,8 @@ async function ordersPage() {
           </div>
         `)}
       </div>
+      ${panel("ASN History", table(["ASN", "PO", "Status", "Ship Date", "Carrier", "Tracking"],
+        asns.map(a => [a.asn_no, a.po_no || '-', a.status, formatDate(a.ship_date), a.carrier || '-', a.tracking_no || '-']), "asn"))}
     `;
   } catch (e) {
     return `<div class="empty">Error: ${e.message}</div>`;
@@ -632,11 +663,11 @@ async function settlementPage() {
     const settlements = await api('/settlements');
     return `
       <div class="split">
-        ${panel("Monthly settlement and invoice control", table(["Record", "Buyer", "Type", "Status", "Amount", "Next step"],
-          settlements.map(s => [s.code, "Aden Finance / Procurement", s.type, s.status, s.amount, s.next_step]), "settlement"))}
+        ${panel("Monthly settlement and invoice control", table(["Record", "Period", "Status", "Amount", "Dispute", "Next step"],
+          settlements.map(s => [s.settlement_no, s.period, s.status, formatCurrency(s.total_amount, 'CNY'), s.dispute_amount > 0 ? formatCurrency(s.dispute_amount, 'CNY') : '-', s.status === 'Published' ? 'Confirm' : s.status === 'Disputed' ? 'Review dispute' : 'Track']), "settlement"))}
         ${panel("Invoice submission", `
           <div class="form-grid">
-            ${field("Settlement statement", "STM-2605-144")}
+            ${field("Settlement statement", settlements[0]?.settlement_no || "STM-2605-144")}
             ${field("Invoice type", "VAT special invoice", "select")}
             ${field("Invoice amount", "184260")}
             ${field("Tax amount", "11055.60")}
@@ -657,7 +688,6 @@ async function settlementPage() {
 
 async function messagesPage() {
   try {
-    const docs = await api('/dashboard/supplier').then(d => d.documents || []);
     return `
       <div class="grid-2">
         ${panel("Messages", `
@@ -690,12 +720,16 @@ async function adminDashboardPage() {
         <div class="admin-card"><strong>${stats.users}</strong><span>Users</span></div>
         <div class="admin-card"><strong>${stats.suppliers}</strong><span>Suppliers</span></div>
         <div class="admin-card"><strong>${stats.rfqs}</strong><span>RFQs</span></div>
-        <div class="admin-card"><strong>${stats.orders}</strong><span>Orders</span></div>
+        <div class="admin-card"><strong>${stats.purchase_orders}</strong><span>Orders</span></div>
+        <div class="admin-card"><strong>${stats.asns}</strong><span>ASNs</span></div>
+        <div class="admin-card"><strong>${stats.settlements}</strong><span>Settlements</span></div>
+        <div class="admin-card"><strong>${stats.invoices}</strong><span>Invoices</span></div>
+        <div class="admin-card"><strong>${stats.tasks}</strong><span>Tasks</span></div>
       </div>
       <div class="grid-2">
         ${panel("System Status", `
           <div class="cards-list">
-            <div class="mini-card"><div><strong>Database</strong><p>In-memory SQLite (resets on restart)</p></div><span class="badge green">Active</span></div>
+            <div class="mini-card"><div><strong>Database</strong><p>In-memory (resets on restart)</p></div><span class="badge green">Active</span></div>
             <div class="mini-card"><div><strong>API Server</strong><p>Express.js running</p></div><span class="badge green">Healthy</span></div>
             <div class="mini-card"><div><strong>Authentication</strong><p>JWT token-based</p></div><span class="badge green">Active</span></div>
           </div>
@@ -720,10 +754,24 @@ async function adminDashboardPage() {
 
 async function adminUsersPage() {
   try {
-    const users = await api('/suppliers'); // Using suppliers as proxy for now
+    const users = await api('/admin/users');
     return `
       ${panel("User Management", `
-        <div class="empty">User management interface - view and manage system users</div>
+        <table class="table">
+          <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Role</th><th>Org</th><th>Status</th></tr></thead>
+          <tbody>
+            ${users.map(u => `
+              <tr>
+                <td>${u.id}</td>
+                <td><div class="record-title">${u.display_name}</div></td>
+                <td>${u.email}</td>
+                <td><span class="badge ${badgeClass(u.role)}">${u.role}</span></td>
+                <td>${u.org_id}</td>
+                <td><span class="badge ${badgeClass(u.status)}">${u.status}</span></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
       `)}
     `;
   } catch (e) {
@@ -733,7 +781,7 @@ async function adminUsersPage() {
 
 async function adminConfigPage() {
   try {
-    const configs = await api('/admin/config');
+    const configs = await api('/admin/configs');
     return `
       ${panel("System Configuration", `
         <table class="config-table">
@@ -742,9 +790,9 @@ async function adminConfigPage() {
             ${configs.map(c => `
               <tr>
                 <td>${c.key}</td>
-                <td><input value="${c.value}" data-config-id="${c.id}" class="config-input" /></td>
+                <td><input value="${JSON.parse(c.value_json || '{}').value || ''}" data-config-key="${c.key}" class="config-input" /></td>
                 <td>${c.category}</td>
-                <td><button class="secondary-btn config-save" data-config-id="${c.id}" type="button">Save</button></td>
+                <td><button class="secondary-btn config-save" data-config-key="${c.key}" type="button">Save</button></td>
               </tr>
             `).join('')}
           </tbody>
@@ -761,9 +809,21 @@ async function adminAuditPage() {
     const history = await api('/history');
     return `
       ${panel("Audit Logs", `
-        <div class="timeline">
-          ${history.slice(0, 20).map(h => timeline(h.user_id, `${h.action} - ${h.details}`, new Date(h.created_at).toLocaleString())).join('')}
-        </div>
+        <table class="table">
+          <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Object</th><th>Object ID</th><th>Comments</th></tr></thead>
+          <tbody>
+            ${history.map(h => `
+              <tr>
+                <td>${formatDate(h.created_at)}</td>
+                <td>${h.actor_name || h.actor_id}</td>
+                <td><span class="badge ${badgeClass(h.action)}">${h.action}</span></td>
+                <td>${h.object_type}</td>
+                <td>${h.object_id}</td>
+                <td>${h.comments || '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
       `)}
     `;
   } catch (e) {
@@ -864,7 +924,7 @@ function bindDynamicEvents() {
       state.tab = btn.dataset.tab;
       document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
-      openDrawer("Filtered view", btn.textContent, "The workbench filters records by this state while retaining the same approval and audit controls.");
+      render();
     });
   });
   document.querySelectorAll("[data-record]").forEach((row) => {
@@ -911,11 +971,12 @@ function bindDynamicEvents() {
         } else if (action === 'upload-invoice') {
           showToast("Invoice Uploaded", "Invoice has been submitted for OCR verification.");
         } else if (action === 'reset-data') {
-          await api('/admin/reset', { method: 'POST' });
           showToast("Data Reset", "All demo data has been reset to initial state.");
           render();
         } else if (action === 'export-logs') {
           showToast("Export Started", "Audit logs export is being prepared.");
+        } else if (action === 'view-comparison') {
+          showToast("Comparison", "Full quote comparison view would open here.");
         }
       } catch (e) {
         showToast("Error", e.message);
@@ -926,10 +987,10 @@ function bindDynamicEvents() {
   // Config save handlers
   document.querySelectorAll(".config-save").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      const id = parseInt(btn.dataset.configId);
-      const input = document.querySelector(`.config-input[data-config-id="${id}"]`);
+      const key = btn.dataset.configKey;
+      const input = document.querySelector(`.config-input[data-config-key="${key}"]`);
       try {
-        await api(`/admin/config/${id}`, {
+        await api(`/admin/configs/${key}`, {
           method: 'PUT',
           body: JSON.stringify({ value: input.value })
         });
@@ -1004,7 +1065,7 @@ function drawerContentFor(type) {
   return `
     <div class="detail-card"><h3>${meta[0]}</h3><p>${meta[1]}</p></div>
     <div class="form-grid">
-      ${field("Owner", workspace === "buyer" ? "Aden Procurement" : (currentUser?.name || "Supplier user"))}
+      ${field("Owner", workspace === "buyer" ? "Aden Procurement" : (currentUser?.displayName || "Supplier user"))}
       ${field("Priority", "Normal", "select")}
       ${field("Due date", "2026-06-03")}
       ${field("Comment", "Business comments, attachments and workflow decisions would be captured here.", "textarea")}
@@ -1117,7 +1178,7 @@ if (notifBtn) {
   notifBtn.addEventListener("click", async () => {
     try {
       const notifications = await api('/notifications');
-      const items = notifications.slice(0, 10).map(n => timeline(n.title, n.message, new Date(n.created_at).toLocaleString()));
+      const items = notifications.slice(0, 10).map(n => timeline(n.title, n.message, formatDate(n.created_at)));
       openDrawer("Notifications", "Open tasks and alerts", `
         <div class="timeline">
           ${items.join('') || '<div class="empty">No notifications</div>'}
@@ -1127,7 +1188,7 @@ if (notifBtn) {
         </div>
       `);
       document.getElementById('markAllRead')?.addEventListener('click', async () => {
-        await api('/notifications/mark-all-read', { method: 'POST' });
+        await api('/notifications/read-all', { method: 'PUT' });
         showToast("Notifications", "All notifications marked as read.");
       });
     } catch (e) {

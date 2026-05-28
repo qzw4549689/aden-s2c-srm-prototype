@@ -1,52 +1,75 @@
 const express = require('express');
 const db = require('../db');
-const { authMiddleware, requireRole } = require('../auth');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
-router.use(authMiddleware);
+router.use(authenticateToken);
 
+// GET /api/contracts - List contracts
 router.get('/', (req, res) => {
-  res.json(db.findAll('contracts'));
-});
+  const { status, supplier_org_id, search } = req.query;
+  let contracts = db.findAll('contracts') || [];
 
-router.get('/:id', (req, res) => {
-  const c = db.findById('contracts', parseInt(req.params.id));
-  if (!c) return res.status(404).json({ error: 'Not found' });
-  res.json(c);
-});
+  if (status) contracts = contracts.filter(c => c.status === status);
+  if (supplier_org_id) contracts = contracts.filter(c => c.supplier_org_id === parseInt(supplier_org_id));
+  if (search) {
+    const q = search.toLowerCase();
+    contracts = contracts.filter(c =>
+      (c.contract_no && c.contract_no.toLowerCase().includes(q)) ||
+      (c.title && c.title.toLowerCase().includes(q))
+    );
+  }
 
-router.post('/', requireRole('buyer', 'admin'), (req, res) => {
-  const { code, supplier_id, type, status, valid_until, price_status } = req.body;
-  const supplier = supplier_id ? db.findById('suppliers', supplier_id) : null;
-  const contract = db.insert('contracts', {
-    code: code || `CTR-${new Date().getFullYear()}-${String(db.findAll('contracts').length + 41).padStart(3, '0')}`,
-    supplier_id, supplier_name: supplier ? supplier.name : '',
-    type, status: status || 'Draft', valid_until, price_status: price_status || 'Pending'
+  const enriched = contracts.map(c => {
+    const org = db.findById('organizations', c.supplier_org_id);
+    return { ...c, supplier_name: org ? org.short_name : null };
   });
-  db.insert('history', { user_id: req.user.username, action: 'Created contract', entity_type: 'contract', entity_id: contract.id, details: `Contract ${contract.code} created` });
+
+  res.json(enriched);
+});
+
+// GET /api/contracts/:id - Get contract detail
+router.get('/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  const contract = db.findById('contracts', id);
+  if (!contract) return res.status(404).json({ error: 'Contract not found' });
+
+  const org = db.findById('organizations', contract.supplier_org_id);
+  res.json({ ...contract, supplier_name: org ? org.short_name : null });
+});
+
+// POST /api/contracts - Create contract
+router.post('/', requireRole('buyer', 'admin'), (req, res) => {
+  const { contract_no, title, supplier_org_id, start_date, end_date, amount, currency, terms } = req.body;
+
+  const contract = db.insert('contracts', {
+    contract_no: contract_no || `CTR-${new Date().toISOString().slice(2, 4)}${new Date().toISOString().slice(5, 7)}-${String((db.findAll('contracts') || []).length + 1).padStart(3, '0')}`,
+    title,
+    supplier_org_id,
+    status: 'Draft',
+    start_date,
+    end_date,
+    amount,
+    currency: currency || 'CNY',
+    terms,
+    created_by: req.user.userId
+  });
+
   res.status(201).json(contract);
 });
 
+// PUT /api/contracts/:id - Update contract
 router.put('/:id', requireRole('buyer', 'admin'), (req, res) => {
-  const contract = db.update('contracts', parseInt(req.params.id), req.body);
-  if (!contract) return res.status(404).json({ error: 'Not found' });
-  db.insert('history', { user_id: req.user.username, action: 'Updated contract', entity_type: 'contract', entity_id: contract.id, details: `Contract ${contract.code} updated` });
-  res.json(contract);
-});
+  const id = parseInt(req.params.id);
+  const contract = db.findById('contracts', id);
+  if (!contract) return res.status(404).json({ error: 'Contract not found' });
 
-// Prices
-router.get('/prices', (req, res) => {
-  res.json(db.findAll('prices'));
-});
+  const updates = req.body;
+  delete updates.id;
+  delete updates.created_at;
 
-router.post('/prices', requireRole('buyer', 'admin'), (req, res) => {
-  const { code, supplier_id, category, status, unit_price, erp_action } = req.body;
-  const supplier = supplier_id ? db.findById('suppliers', supplier_id) : null;
-  const price = db.insert('prices', {
-    code: code || `PRC-${new Date().toISOString().slice(2, 7).replace('-', '')}-${String(db.findAll('prices').length + 1).padStart(3, '0')}`,
-    supplier_id, supplier_name: supplier ? supplier.name : '', category, status, unit_price, erp_action
-  });
-  res.status(201).json(price);
+  const updated = db.update('contracts', id, updates);
+  res.json(updated);
 });
 
 module.exports = router;
