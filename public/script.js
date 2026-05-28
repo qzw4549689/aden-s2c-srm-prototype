@@ -180,9 +180,19 @@ function tabs(items, active = "all") {
 
 function field(label, value, type = "text", name = "") {
   const nm = name || label.toLowerCase().replace(/\s+/g, '_');
-  if (type === "textarea") return `<div class="field"><label>${label}</label><textarea name="${nm}">${value || ""}</textarea></div>`;
-  if (type === "select") return `<div class="field"><label>${label}</label><select name="${nm}"><option>${value}</option></select></div>`;
-  return `<div class="field"><label>${label}</label><input name="${nm}" value="${value || ""}" type="${type}" /></div>`;
+  if (type === "textarea") return `<div class="field"><label>${label}</label><textarea name="${nm}" class="form-input">${value || ""}</textarea></div>`;
+  if (type === "select") return `<div class="field"><label>${label}</label><select name="${nm}" class="form-input"><option>${value}</option></select></div>`;
+  return `<div class="field"><label>${label}</label><input name="${nm}" value="${value || ""}" type="${type}" class="form-input" /></div>`;
+}
+
+// Collect form data from a container element
+function collectFormData(container) {
+  const data = {};
+  if (!container) return data;
+  container.querySelectorAll('.form-input, [name]').forEach(el => {
+    if (el.name) data[el.name] = el.value;
+  });
+  return data;
 }
 
 function bar(label, pct) {
@@ -298,7 +308,7 @@ async function sourcingPage() {
             filtered.map(r => [r.rfq_no, r.title, r.status, r.category, formatDate(r.due_at), r.award_supplier_id ? 'Yes' : '-']), "rfq")}
         `, `<button class="secondary-btn" data-open="rfq" type="button">New RFQ</button>`)}
         ${panel("Create RFQ", `
-          <div class="form-grid">
+          <div class="form-grid" data-form="rfq">
             ${field("Category", "Food ingredients", "select")}
             ${field("Sourcing method", "Invited RFQ", "select")}
             ${field("Response deadline", "2026-06-03")}
@@ -538,7 +548,7 @@ async function profilePage() {
     return `
       <div class="split" data-profile-id="${myProfile.id}" data-profile-status="${myProfile.qualification_status}">
         ${panel("Company profile", `
-          <div class="form-grid">
+          <div class="form-grid" data-form="profile">
             ${field("Legal entity", myProfile.org_name || "SuXin Food Co., Ltd.")}
             ${field("Supplier category", myProfile.category || "Prepared food", "select")}
             ${field("Tax registration number", myProfile.tax_certificate_no || "9132************")}
@@ -577,7 +587,7 @@ async function opportunitiesPage() {
         ${panel("Available opportunities", table(["Event", "Scope", "Status", "Category", "Due date", "Action"],
           rfqs.map(o => [o.rfq_no, o.title, o.status, o.category, formatDate(o.due_at), o.my_invitation_status === 'pending' ? 'Accept' : 'Quote']), "opportunity"))}
         ${panel("Quotation response", `
-          <div class="form-grid">
+          <div class="form-grid" data-form="quote">
             ${field("Unit price", "18.40")}
             ${field("Currency", "CNY", "select")}
             ${field("Lead time", "3 working days")}
@@ -642,7 +652,7 @@ async function ordersPage() {
         ${panel("PO list", table(["PO", "Buyer", "Status", "Delivery date", "Amount", "Next step"],
           orders.map(o => [o.po_no, "Aden Procurement", o.status, formatDate(o.delivery_date), formatCurrency(o.total_amount, o.currency), o.status === 'Pending Supplier' ? 'Confirm' : o.status === 'Change Requested' ? 'Review change' : 'Track']), "order"))}
         ${panel("Create ASN", `
-          <div class="form-grid">
+          <div class="form-grid" data-form="asn">
             ${field("PO number", confirmOrder?.po_no || orders[0]?.po_no || "PO-45001292")}
             ${field("Shipment date", "2026-06-05")}
             ${field("Carrier", "SF Express cold chain")}
@@ -674,7 +684,7 @@ async function settlementPage() {
         ${panel("Monthly settlement and invoice control", table(["Record", "Period", "Status", "Amount", "Dispute", "Next step"],
           settlements.map(s => [s.settlement_no, s.period, s.status, formatCurrency(s.total_amount, 'CNY'), s.dispute_amount > 0 ? formatCurrency(s.dispute_amount, 'CNY') : '-', s.status === 'Published' ? 'Confirm' : s.status === 'Disputed' ? 'Review dispute' : 'Track']), "settlement"))}
         ${panel("Invoice submission", `
-          <div class="form-grid">
+          <div class="form-grid" data-form="invoice">
             ${field("Settlement statement", invStm?.settlement_no || settlements[0]?.settlement_no || "STM-2605-144")}
             ${field("Invoice type", "VAT special invoice", "select")}
             ${field("Invoice amount", "184260")}
@@ -967,14 +977,18 @@ function bindDynamicEvents() {
       const action = btn.dataset.action;
       try {
         if (action === 'create-rfq') {
+          const formContainer = btn.closest('.panel')?.querySelector('[data-form="rfq"]');
+          const formData = collectFormData(formContainer);
           await api('/rfqs', {
             method: 'POST',
             body: JSON.stringify({
               rfq_no: "RFQ-" + new Date().toISOString().slice(2,4) + new Date().toISOString().slice(5,7) + "-" + String(Math.floor(Math.random() * 900) + 100),
-              title: "Ambient food ingredients", category: "Food ingredients",
-              currency: "CNY", due_at: "2026-06-10T17:00:00Z",
-              description: "New sourcing request from buyer",
-              items: [{ line_no: 1, material_description: "Ambient food ingredients", quantity: 1000, unit: "kg" }]
+              title: formData.material___service_scope || "Ambient food ingredients",
+              category: formData.category || "Food ingredients",
+              currency: "CNY",
+              due_at: (formData.response_deadline || "2026-06-10") + "T17:00:00Z",
+              description: formData.supplier_invite_list || "New sourcing request from buyer",
+              items: [{ line_no: 1, material_description: formData.material___service_scope || "Ambient food ingredients", quantity: 1000, unit: "kg" }]
             })
           });
           showToast("RFQ Created", "The RFQ has been created and sent to suppliers.");
@@ -982,18 +996,39 @@ function bindDynamicEvents() {
         } else if (action === 'update-profile') {
           const profileId = btn.dataset.profileId || cachedData.myProfileId;
           if (!profileId) throw new Error('Profile ID not found');
+          // Read form data first
+          const formContainer = btn.closest('.panel')?.querySelector('[data-form="profile"]');
+          const formData = collectFormData(formContainer);
+          // Map frontend field names to backend field names
+          const updates = {};
+          if (formData.primary_contact) updates.contact_name = formData.primary_contact;
+          if (formData.supplier_category) updates.category = formData.supplier_category;
+          if (formData.tax_registration_number) updates.tax_certificate_no = formData.tax_registration_number;
+          if (formData.bank_account) updates.bank_account = formData.bank_account;
+          if (formData.delivery_coverage) updates.service_area = formData.delivery_coverage;
+          // Save form data first
+          if (Object.keys(updates).length > 0) {
+            await api(`/suppliers/${profileId}`, { method: 'PUT', body: JSON.stringify(updates) });
+          }
+          // Then submit for review
           const result = await api(`/suppliers/${profileId}/submit`, { method: 'POST' });
           showToast("Profile Updated", `Status changed to: ${result.qualification_status}`);
           render();
         } else if (action === 'submit-quote') {
           const rfqId = btn.dataset.rfqId || cachedData.quoteRfqId;
           if (!rfqId) throw new Error('No RFQ selected for quotation');
+          const formContainer = btn.closest('.panel')?.querySelector('[data-form="quote"]');
+          const formData = collectFormData(formContainer);
+          const unitPrice = parseFloat(formData.unit_price) || 18.40;
+          const qty = 1000; // default qty for demo
           await api(`/rfqs/${rfqId}/quote`, {
             method: 'POST',
             body: JSON.stringify({
-              total_amount: 48500, currency: "CNY", lead_time: "3 working days",
-              moq: "500 pcs", validity_days: 30, remarks: "Competitive pricing",
-              items: [{ rfq_item_id: 1, unit_price: 18.40, amount: 18400, remarks: "" }]
+              total_amount: unitPrice * qty, currency: formData.currency || "CNY",
+              lead_time: formData.lead_time || "3 working days",
+              moq: formData.minimum_order_quantity || "100 kg",
+              validity_days: 30, remarks: formData.commercial_notes || "Competitive pricing",
+              items: [{ rfq_item_id: 1, unit_price: unitPrice, amount: unitPrice * qty, remarks: "" }]
             })
           });
           showToast("Quote Submitted", "Your quotation response has been recorded.");
@@ -1003,12 +1038,15 @@ function bindDynamicEvents() {
         } else if (action === 'create-asn') {
           const orderId = btn.dataset.orderId || cachedData.asnOrderId;
           if (!orderId) throw new Error('No confirmed PO available for ASN creation');
+          const formContainer = btn.closest('.panel')?.querySelector('[data-form="asn"]');
+          const formData = collectFormData(formContainer);
+          const shipDate = formData.shipment_date || "2026-06-05";
           await api(`/orders/${orderId}/asn`, {
             method: 'POST',
             body: JSON.stringify({
-              ship_date: "2026-06-05", eta: "2026-06-06", carrier: "SF Express",
-              tracking_no: "SF888999777", total_cartons: 50, total_pallets: 2,
-              remarks: "Fresh delivery",
+              ship_date: shipDate, eta: shipDate, carrier: formData.carrier || "SF Express",
+              tracking_no: formData.vehicle____tracking || "SF888999777", total_cartons: 50, total_pallets: 2,
+              remarks: formData.packing_list || "Fresh delivery",
               lines: [{ po_line_id: 1, ship_qty: 100, batch_no: "B001", remarks: "" }]
             })
           });
@@ -1017,12 +1055,15 @@ function bindDynamicEvents() {
         } else if (action === 'upload-invoice') {
           const stmId = btn.dataset.stmId || cachedData.invoiceStmId;
           if (!stmId) throw new Error('No confirmed settlement available for invoice upload');
+          const formContainer = btn.closest('.panel')?.querySelector('[data-form="invoice"]');
+          const formData = collectFormData(formContainer);
+          const amount = parseFloat(formData.invoice_amount) || 10000;
           await api(`/settlements/${stmId}/invoice`, {
             method: 'POST',
             body: JSON.stringify({
               invoice_no: "INV-2026-099", invoice_date: "2026-05-28",
-              amount: 10000, tax_amount: 566.04, tax_rate: 0.06,
-              currency: "CNY", attachment: "invoice_099.pdf"
+              amount: amount, tax_amount: parseFloat(formData.tax_amount) || (amount * 0.06),
+              tax_rate: 0.06, currency: "CNY", attachment: "invoice_099.pdf"
             })
           });
           showToast("Invoice Uploaded", "Invoice has been submitted for OCR verification.");
