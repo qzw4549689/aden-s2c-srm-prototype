@@ -994,13 +994,17 @@ function bindDynamicEvents() {
           showToast("RFQ Created", "The RFQ has been created and sent to suppliers.");
           render();
         } else if (action === 'update-profile') {
-          const profileId = btn.dataset.profileId || cachedData.myProfileId;
-          if (!profileId) throw new Error('Profile ID not found');
+          // Get the correct profile for current user's org
+          const suppliers = await api('/suppliers');
+          const myProfile = suppliers.find(p => p.org_id === currentUser.orgId);
+          if (!myProfile) throw new Error('Profile not found for current user');
+          const profileId = myProfile.id;
           // Read form data first
           const formContainer = btn.closest('.panel')?.querySelector('[data-form="profile"]');
           const formData = collectFormData(formContainer);
           // Map frontend field names to backend field names
           const updates = {};
+          if (formData.legal_entity) updates.org_name = formData.legal_entity;
           if (formData.primary_contact) updates.contact_name = formData.primary_contact;
           if (formData.supplier_category) updates.category = formData.supplier_category;
           if (formData.tax_registration_number) updates.tax_certificate_no = formData.tax_registration_number;
@@ -1045,7 +1049,7 @@ function bindDynamicEvents() {
             method: 'POST',
             body: JSON.stringify({
               ship_date: shipDate, eta: shipDate, carrier: formData.carrier || "SF Express",
-              tracking_no: formData.vehicle____tracking || "SF888999777", total_cartons: 50, total_pallets: 2,
+              tracking_no: formData.vehicle____tracking || formData.vehicle___tracking || formData['vehicle_/_tracking'] || "SF888999777", total_cartons: 50, total_pallets: 2,
               remarks: formData.packing_list || "Fresh delivery",
               lines: [{ po_line_id: 1, ship_qty: 100, batch_no: "B001", remarks: "" }]
             })

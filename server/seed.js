@@ -4,6 +4,9 @@ const bcrypt = require('bcryptjs');
 const DEMO_PASSWORD = 'demo123';
 
 function seed() {
+  // Only seed if database is empty (first start)
+  const existingOrgs = db.findAll('organizations');
+  if (existingOrgs.length > 0) return;
   db.reset();
 
   // ========== 1. Organizations ==========

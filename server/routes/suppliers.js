@@ -17,7 +17,7 @@ router.get('/', (req, res) => {
   if (search) {
     const q = search.toLowerCase();
     suppliers = suppliers.filter(s => {
-      const org = db.findById('organizations', s.org_id);
+      const org = db.findById('orgs', s.org_id);
       return (org && org.short_name.toLowerCase().includes(q)) ||
              (s.contact_name && s.contact_name.toLowerCase().includes(q)) ||
              (s.contact_email && s.contact_email.toLowerCase().includes(q));
@@ -45,7 +45,7 @@ router.get('/:id', (req, res) => {
 router.post('/', requireRole('buyer', 'admin'), (req, res) => {
   const { org_name, category, contact_name, contact_phone, contact_email, business_license_no, tax_certificate_no, food_safety_cert_no, bank_name, bank_account, bank_branch, address } = req.body;
 
-  const org = db.insert('organizations', {
+  const org = db.insert('orgs', {
     type: 'supplier',
     legal_name: org_name,
     short_name: org_name,
@@ -97,6 +97,12 @@ router.put('/:id', (req, res) => {
   const updates = req.body;
   delete updates.id;
   delete updates.created_at;
+
+  // If org_name is updated, also update the organizations table (both name and short_name)
+  if (updates.org_name) {
+    db.update('organizations', profile.org_id, { name: updates.org_name, short_name: updates.org_name });
+    delete updates.org_name;
+  }
 
   const updated = db.update('supplier_profiles', id, { ...updates, updated_by: req.user.userId });
   res.json(updated);
