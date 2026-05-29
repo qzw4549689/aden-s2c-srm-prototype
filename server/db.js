@@ -6,7 +6,10 @@ const path = require('path');
 const initSqlJs = require('sql.js/dist/sql-wasm.js');
 const sqlWasmPath = require.resolve('sql.js/dist/sql-wasm.wasm');
 
-const DB_FILE = path.join(__dirname, '..', 'data', 'srm.db');
+// Use /tmp on Vercel (read-only filesystem except /tmp), local data/ for dev
+const DB_FILE = process.env.VERCEL
+  ? '/tmp/srm.db'
+  : path.join(__dirname, '..', 'data', 'srm.db');
 const DB_DIR = path.dirname(DB_FILE);
 
 let SQL = null;
