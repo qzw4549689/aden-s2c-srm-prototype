@@ -1291,6 +1291,7 @@ function bindDynamicEvents() {
           // Then submit for review
           const result = await api(`/suppliers/${profileId}/submit`, { method: 'POST' });
           showToast("Profile Updated", `Status changed to: ${result.qualification_status}`);
+          closeDrawer();
           render();
         } else if (action === 'submit-quote') {
           const rfqId = btn.dataset.rfqId || cachedData.quoteRfqId;
@@ -1310,6 +1311,7 @@ function bindDynamicEvents() {
             })
           });
           showToast("Quote Submitted", "Your quotation response has been recorded.");
+          closeDrawer();
           render();
         } else if (action === 'submit-bid') {
           showToast("Bid Submitted", "Your auction bid has been accepted.");
@@ -1329,6 +1331,7 @@ function bindDynamicEvents() {
             })
           });
           showToast("ASN Created", "Advanced Shipping Notice has been sent.");
+          closeDrawer();
           render();
         } else if (action === 'upload-invoice') {
           const stmId = btn.dataset.stmId || cachedData.invoiceStmId;
@@ -1345,6 +1348,7 @@ function bindDynamicEvents() {
             })
           });
           showToast("Invoice Uploaded", "Invoice has been submitted for OCR verification.");
+          closeDrawer();
           render();
         } else if (action === 'reset-data') {
           showToast("Data Reset", "All demo data has been reset to initial state.");
