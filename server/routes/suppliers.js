@@ -17,7 +17,7 @@ router.get('/', (req, res) => {
   if (search) {
     const q = search.toLowerCase();
     suppliers = suppliers.filter(s => {
-      const org = db.findById('orgs', s.org_id);
+      const org = db.findById('organizations', s.org_id);
       return (org && org.short_name.toLowerCase().includes(q)) ||
              (s.contact_name && s.contact_name.toLowerCase().includes(q)) ||
              (s.contact_email && s.contact_email.toLowerCase().includes(q));
@@ -45,7 +45,7 @@ router.get('/:id', (req, res) => {
 router.post('/', requireRole('buyer', 'admin'), (req, res) => {
   const { org_name, category, contact_name, contact_phone, contact_email, business_license_no, tax_certificate_no, food_safety_cert_no, bank_name, bank_account, bank_branch, address } = req.body;
 
-  const org = db.insert('orgs', {
+  const org = db.insert('organizations', {
     type: 'supplier',
     legal_name: org_name,
     short_name: org_name,
@@ -137,7 +137,7 @@ router.post('/:id/submit', requireRole('supplier'), (req, res) => {
     org_id: 1,
     object_type: 'onboarding',
     object_id: id,
-    title: `Review supplier onboarding: ${updated.short_name || 'New Supplier'}`,
+    title: `Review supplier onboarding: ${profile.short_name || 'New Supplier'}`,
     status: 'open',
     due_at: new Date(Date.now() + 7 * 86400000).toISOString()
   });

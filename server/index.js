@@ -4,11 +4,15 @@ const path = require('path');
 require('dotenv').config();
 
 const { seed } = require('./seed');
+const db = require('./db');
 
 const app = express();
 
-// Seed demo data on startup
-seed();
+// Seed demo data on startup (async)
+(async () => {
+  await db.init();
+  await seed();
+})();
 
 // Middleware
 app.use(cors());
@@ -43,8 +47,16 @@ app.get(/.*/, (req, res) => {
 
 // Error handler
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ error: 'Internal server error' });
+  console.error('Error:', err.message);
+  if (process.env.NODE_ENV !== 'production') {
+    console.error(err.stack);
+  }
+  res.status(500).json({ error: err.message || 'Internal server error' });
+});
+
+// Catch unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
 const PORT = process.env.PORT || 3000;
