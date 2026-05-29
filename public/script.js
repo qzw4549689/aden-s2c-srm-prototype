@@ -1586,10 +1586,16 @@ function openDrawer(kicker, title, body) {
 
 function bindDrawerActions() {
   document.querySelectorAll("[data-drawer-submit]").forEach((btn) => {
-    btn.addEventListener("click", () => showToast("Submitted", "The workflow action has been recorded for this prototype session."));
+    btn.addEventListener("click", () => {
+      showToast("Submitted", "The workflow action has been recorded for this prototype session.");
+      closeDrawer();
+    });
   });
   document.querySelectorAll("[data-drawer-save]").forEach((btn) => {
-    btn.addEventListener("click", () => showToast("Saved", "Draft changes are saved locally in the prototype session."));
+    btn.addEventListener("click", () => {
+      showToast("Saved", "Draft changes are saved locally in the prototype session.");
+      closeDrawer();
+    });
   });
   // Workflow action handlers
   document.querySelectorAll("[data-workflow]").forEach((btn) => {
