@@ -374,7 +374,40 @@ async function seed() {
     [c.id, c.key, c.value_json, c.category]
   ));
 
-  console.log('Database seeded with comprehensive demo data');
+  // ========== 24. Contracts (v2.0) ==========
+  const contracts = [
+    { id: 1, contract_no: 'CTR-2605-001', supplier_org_id: 4, rfq_id: 1, title: 'Ambient Food Ingredients Supply Contract', start_date: '2026-06-01', end_date: '2027-06-01', total_amount: 184260, currency: 'CNY', status: 'signed', terms: 'Payment: Net 30 days. Delivery: FOB Shanghai. Quality: ISO 22000. Minimum order: 100 kg.', rejection_reason: null, signed_at: '2026-05-29T14:00:00Z', signed_by_buyer: 1, signed_by_supplier: 4, created_by: 1 },
+    { id: 2, contract_no: 'CTR-2605-002', supplier_org_id: 2, rfq_id: null, title: 'Fresh Produce Supply Contract', start_date: '2026-06-02', end_date: '2027-06-02', total_amount: 98500, currency: 'CNY', status: 'approved', terms: 'Payment: Net 30 days. Delivery: Cold chain maintained 0-4C.', rejection_reason: null, signed_at: null, signed_by_buyer: null, signed_by_supplier: null, created_by: 1 },
+    { id: 3, contract_no: 'CTR-2605-003', supplier_org_id: 3, rfq_id: 4, title: 'Frozen Products Supply Contract', start_date: '2026-06-03', end_date: '2027-06-03', total_amount: 221500, currency: 'CNY', status: 'under_review', terms: 'Payment: Net 45 days. Delivery: -18C storage required.', rejection_reason: null, signed_at: null, signed_by_buyer: null, signed_by_supplier: null, created_by: 1 },
+    { id: 4, contract_no: 'CTR-2605-004', supplier_org_id: 5, rfq_id: null, title: 'Packaging Materials Contract', start_date: null, end_date: null, total_amount: 45600, currency: 'CNY', status: 'draft', terms: 'Payment: Net 30 days. Minimum order: 1000 pcs.', rejection_reason: null, signed_at: null, signed_by_buyer: null, signed_by_supplier: null, created_by: 1 },
+  ];
+  contracts.forEach(c => db.rawRun(
+    `INSERT INTO contracts (id, contract_no, supplier_org_id, rfq_id, title, start_date, end_date, total_amount, currency, status, terms, rejection_reason, signed_at, signed_by_buyer, signed_by_supplier, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [c.id, c.contract_no, c.supplier_org_id, c.rfq_id, c.title, c.start_date, c.end_date, c.total_amount, c.currency, c.status, c.terms, c.rejection_reason, c.signed_at, c.signed_by_buyer, c.signed_by_supplier, c.created_by]
+  ));
+
+  // ========== 25. Settlement Dispute Logs (v2.0) ==========
+  const disputeLogs = [
+    { id: 1, settlement_id: 2, sender_id: 4, sender_role: 'supplier', message: 'PO-45001292 actual received 3500 pcs vs settlement qty 4000 pcs. Disputing ¥5,000.', created_at: '2026-05-26T10:00:00Z' },
+    { id: 2, settlement_id: 2, sender_id: 1, sender_role: 'buyer', message: 'We have reviewed the GRN record. Confirming 3500 pcs received. Accepting dispute amount of ¥5,000.', created_at: '2026-05-27T14:00:00Z' },
+    { id: 3, settlement_id: 2, sender_id: 4, sender_role: 'supplier', message: 'Thank you for the confirmation. We accept the adjusted settlement amount.', created_at: '2026-05-27T16:00:00Z' },
+  ];
+  disputeLogs.forEach(d => db.rawRun(
+    `INSERT INTO settlement_dispute_logs (id, settlement_id, sender_id, sender_role, message, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    [d.id, d.settlement_id, d.sender_id, d.sender_role, d.message, d.created_at]
+  ));
+
+  // ========== 26. v2.0 Tasks ==========
+  const v2Tasks = [
+    { id: 20, assignee_user_id: 1, org_id: 1, object_type: 'contract', object_id: 3, title: 'Review contract draft: CTR-2605-003 (Frozen Products)', status: 'open', due_at: '2026-06-05T23:59:59Z' },
+    { id: 21, assignee_user_id: 4, org_id: 4, object_type: 'settlement', object_id: 2, title: 'Review adjusted settlement STM-2605-151 after dispute resolution', status: 'open', due_at: '2026-06-03T23:59:59Z' },
+  ];
+  v2Tasks.forEach(t => db.rawRun(
+    `INSERT INTO tasks (id, assignee_user_id, org_id, object_type, object_id, title, status, due_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [t.id, t.assignee_user_id, t.org_id, t.object_type, t.object_id, t.title, t.status, t.due_at]
+  ));
+
+  console.log('Database seeded with comprehensive demo data (v2.0)');
   console.log('Organizations:', db.findAll('organizations').length);
   console.log('Users:', db.findAll('users').length);
   console.log('Supplier Profiles:', db.findAll('supplier_profiles').length);
@@ -388,6 +421,8 @@ async function seed() {
   console.log('Tasks:', db.findAll('tasks').length);
   console.log('Notifications:', db.findAll('notifications').length);
   console.log('Audit Logs:', db.findAll('audit_logs').length);
+  console.log('Contracts (v2.0):', db.findAll('contracts').length);
+  console.log('Dispute Logs (v2.0):', db.findAll('settlement_dispute_logs').length);
 }
 
 module.exports = { seed, DEMO_PASSWORD };

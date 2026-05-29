@@ -17,6 +17,14 @@ router.get('/', (req, res) => {
     const asns = db.findAll('asns');
     const settlements = db.findAll('settlements');
 
+    // v2.0: calculate spend and contract KPIs
+    const allSettlements = db.findAll('settlements');
+    const totalSpend = allSettlements
+      .filter(s => ['Approved', 'Closed', 'Supplier Confirmed', 'Invoice Submitted'].includes(s.status))
+      .reduce((sum, s) => sum + (s.total_amount || 0), 0);
+    const contracts = db.findAll('contracts');
+    const pendingContracts = contracts.filter(c => c.status === 'under_review').length;
+
     res.json({
       role: 'buyer',
       kpi: {
@@ -28,6 +36,9 @@ router.get('/', (req, res) => {
         asn_exceptions: asns.filter(a => a.status === 'Exception').length,
         pending_settlements: settlements.filter(s => s.status === 'Published' || s.status === 'Disputed').length,
         pending_invoices: db.findAll('invoices').filter(i => i.status === 'Under Review').length,
+        total_spend: `¥${(totalSpend / 10000).toFixed(1)}万`,
+        pending_contracts: pendingContracts,
+        savings_opportunity: `¥${(totalSpend * 0.05 / 10000).toFixed(1)}万`,
       },
       recent_rfqs: rfqs.slice(0, 5),
       recent_pos: pos.slice(0, 5),

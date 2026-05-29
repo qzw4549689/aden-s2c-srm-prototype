@@ -205,9 +205,22 @@ function createTables() {
     );
     CREATE TABLE IF NOT EXISTS contracts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      contract_no TEXT, supplier_org_id INTEGER, title TEXT,
-      status TEXT, start_date TEXT, end_date TEXT, value REAL,
-      currency TEXT, terms TEXT, created_by INTEGER,
+      contract_no TEXT UNIQUE, supplier_org_id INTEGER, rfq_id INTEGER,
+      title TEXT, status TEXT DEFAULT 'draft',
+      start_date TEXT, end_date TEXT, total_amount REAL,
+      currency TEXT DEFAULT 'CNY', terms TEXT,
+      rejection_reason TEXT, signed_at TEXT,
+      signed_by_buyer INTEGER, signed_by_supplier INTEGER,
+      created_by INTEGER,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS settlement_dispute_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      settlement_id INTEGER NOT NULL,
+      sender_id INTEGER NOT NULL,
+      sender_role TEXT NOT NULL CHECK(sender_role IN ('buyer','supplier')),
+      message TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now'))
     );
   `;
@@ -348,7 +361,7 @@ const dbApi = {
       'po_confirmations', 'asns', 'asn_lines', 'asn_exceptions',
       'settlements', 'settlement_lines', 'invoices', 'approval_requests',
       'approval_actions', 'tasks', 'notifications', 'audit_logs',
-      'system_configs', 'contracts'
+      'system_configs', 'contracts', 'settlement_dispute_logs'
     ];
     tables.forEach(t => {
       try { db.run(`DELETE FROM ${t}`); } catch (e) { /* ignore */ }

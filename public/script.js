@@ -32,6 +32,7 @@ async function api(path, opts = {}) {
 const nav = {
   buyer: [
     ["command", "dashboard", "S2C Command Center"],
+    ["spendAnalytics", "barChart", "Spend Analytics"],
     ["suppliers", "users", "Supplier Lifecycle"],
     ["sourcing", "search", "RFx & Sourcing"],
     ["tender", "gavel", "Tender & Auction"],
@@ -67,6 +68,7 @@ let cachedData = {};
 
 const pageTitles = {
   command: "S2C Command Center",
+  spendAnalytics: "Spend Analytics",
   suppliers: "Supplier Lifecycle",
   sourcing: "RFx & Sourcing",
   tender: "Tender & Auction",
@@ -89,6 +91,7 @@ const pageTitles = {
 
 const primaryActions = {
   command: "Create RFQ",
+  spendAnalytics: "Export Report",
   suppliers: "Register Supplier",
   sourcing: "Create RFQ",
   tender: "Create Tender",
@@ -153,7 +156,7 @@ function table(headers, rows, type) {
           <tr data-record="${row[0] || row.id}" data-type="${type}">
             ${row.map((cell, index) => {
               if (index === 0) return `<td><div class="record-title">${cell}</div><div class="record-sub">Click to open details</div></td>`;
-              if (index === 3 || String(cell).match(/Qualified|Trial|Potential|Open|Draft|review|approval|Signature|Active|Confirmed|planned|Passed|Exception|Expiry|Approved|Rejected|Disputed|Shipped|Preparing|Returned|Buyer Review|Award Pending|Award Approved|Partially Confirmed|Change Requested|Invoice Submitted|Supplier Confirmed/i)) {
+              if (index === 3 || (typeof cell === 'string' && !cell.includes('<') && String(cell).match(/Qualified|Trial|Potential|Open|Draft|review|approval|Signature|Active|Confirmed|planned|Passed|Exception|Expiry|Approved|Rejected|Disputed|Shipped|Preparing|Returned|Buyer Review|Award Pending|Award Approved|Partially Confirmed|Change Requested|Invoice Submitted|Supplier Confirmed/i))) {
                 return `<td><span class="badge ${badgeClass(cell)}">${cell}</span></td>`;
               }
               return `<td>${cell}</td>`;
@@ -235,6 +238,11 @@ async function commandPage() {
           ${kpi("Pending Tasks", k.pending_tasks || 0, "Tasks requiring your action", 72)}
         `}
       </div>
+      ${isBuyer ? `<div class="grid-3">
+        ${kpi("Total Spend", k.total_spend || "¥856,000", "Cumulative spend YTD", 85)}
+        ${kpi("Pending Contracts", k.pending_contracts || 2, "Awaiting approval/signature", 60)}
+        ${kpi("Savings Opportunity", k.savings_opportunity || "¥42,800", "Estimated from competitive bidding", 45)}
+      </div>` : ''}
       ${panel("End-to-end S2C operating flow", workflow([
         ["Spend & demand", "Category demand and purchase needs are consolidated before sourcing."],
         ["Supplier discovery", "Registration, qualification, credit and duplicate checks are governed in SRM."],
@@ -376,27 +384,180 @@ async function tenderPage() {
 async function contractsPage() {
   try {
     const contracts = await api('/contracts');
+    const statusFilter = state.contractFilter || 'all';
+    const filtered = statusFilter === 'all' ? contracts : contracts.filter(c => c.status === statusFilter);
+
     return `
+      <div class="filter-tabs">
+        ${['all', 'draft', 'under_review', 'approved', 'signed', 'returned'].map(s =>
+          `<button class="${s === statusFilter ? 'active' : ''}" data-contract-filter="${s}" type="button">${s === 'all' ? 'All' : s.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}</button>`
+        ).join('')}
+      </div>
       <div class="split">
-        ${panel("Contract repository", table(["Contract", "Supplier", "Type", "Status", "Valid until", "Amount"],
-          contracts.map(c => [c.contract_no || c.id, c.supplier_name || '-', c.type || 'Supply', c.status, formatDate(c.end_date), formatCurrency(c.amount, c.currency)]), "contract"),
-          `<button class="secondary-btn" data-open="contract" type="button">New contract</button>`)}
-        ${panel("Contract drafting", `
-          <div class="form-grid">
-            ${field("Template", "Food supply frame agreement", "select")}
-            ${field("Contract owner", "Category Manager - Food")}
-            ${field("Payment terms", "Monthly settlement + AP invoice")}
-            ${field("Renewal alert", "60 days before expiry")}
-            ${field("Key clauses", "Quality, delivery window, site exception handling, invoice requirements", "textarea")}
-            ${field("Approval route", "Legal -> Procurement -> Finance", "textarea")}
-          </div>
-        `)}
+        ${panel("Contract repository", table(["Contract", "Supplier", "Amount", "Start", "End", "Status"],
+          filtered.map(c => [c.contract_no || c.id, c.supplier_name || '-', formatCurrency(c.total_amount, c.currency), formatDate(c.start_date), formatDate(c.end_date), c.status]), "contract"),
+          `<button class="secondary-btn" data-action="new-contract" type="button">New contract</button>`)}
       </div>
     `;
   } catch (e) {
     return `<div class="empty">Error: ${e.message}</div>`;
   }
 }
+
+async function openContractDrawer(contractId) {
+  try {
+    const contract = await api(`/contracts/${contractId}`);
+    const actions = [];
+    if (contract.status === 'draft' || contract.status === 'returned') {
+      actions.push(`<button class="primary-btn" data-action="contract-submit" data-id="${contract.id}" type="button">Submit for Approval</button>`);
+    }
+    if (contract.status === 'under_review') {
+      actions.push(`<button class="primary-btn" data-action="contract-approve" data-id="${contract.id}" type="button">Approve</button>`);
+      actions.push(`<button class="secondary-btn" data-action="contract-return" data-id="${contract.id}" type="button">Return</button>`);
+    }
+    if (contract.status === 'approved') {
+      actions.push(`<button class="primary-btn" data-action="contract-sign" data-id="${contract.id}" type="button">Sign Contract</button>`);
+    }
+
+    drawerKicker.textContent = 'Contract Detail';
+    drawerTitle.textContent = contract.contract_no;
+    drawerBody.innerHTML = `
+      <div class="detail-section">
+        <p><span class="badge ${badgeClass(contract.status)}">${contract.status.replace('_', ' ').toUpperCase()}</span></p>
+        <p><strong>Supplier:</strong> ${contract.supplier_name || '-'}</p>
+        <p><strong>Amount:</strong> ${formatCurrency(contract.total_amount, contract.currency)}</p>
+        <p><strong>Period:</strong> ${formatDate(contract.start_date)} ~ ${formatDate(contract.end_date)}</p>
+        ${contract.rfq_no ? `<p><strong>Associated RFQ:</strong> ${contract.rfq_no}</p>` : ''}
+        ${contract.rejection_reason ? `<p class="text-red"><strong>Return Reason:</strong> ${contract.rejection_reason}</p>` : ''}
+        ${contract.signed_at ? `<p><strong>Signed at:</strong> ${formatDate(contract.signed_at)}</p>` : ''}
+      </div>
+      <div class="detail-section">
+        <h4>Terms & Conditions</h4>
+        <p>${contract.terms || 'No terms specified.'}</p>
+      </div>
+      <div class="drawer-actions">
+        ${actions.join('')}
+      </div>
+    `;
+    drawer.setAttribute('aria-hidden', 'false');
+    drawerBackdrop.hidden = false;
+  } catch (e) {
+    showToast(`Error: ${e.message}`, 'error');
+  }
+}
+
+async function spendAnalyticsPage() {
+  try {
+    const overview = await api('/spend-analytics/overview');
+    const byCategory = await api('/spend-analytics/by-category');
+    const bySupplier = await api('/spend-analytics/by-supplier');
+    const trends = await api('/spend-analytics/trends');
+
+    return `
+      <div class="grid-4">
+        ${kpi(formatCurrency(overview.total_spend, overview.currency), "Total Spend", "Cumulative spend across all categories", overview.yoy_change)}
+        ${kpi(overview.total_orders, "Total Orders", "Purchase orders processed", 8)}
+        ${kpi(overview.active_suppliers, "Active Suppliers", "Suppliers with orders in period", 0)}
+        ${kpi("¥" + (overview.total_spend * 0.05).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ","), "Savings Opportunity", "Estimated savings based on competitive bidding", 15)}
+      </div>
+      <div class="grid-2">
+        ${panel("Spend by Category", `
+          <div class="chart-container" style="height:280px;">
+            <canvas id="categoryChart"></canvas>
+          </div>
+          <div class="category-legend">
+            ${byCategory.map(c => `
+              <div class="legend-item">
+                <span class="legend-dot" style="background:${categoryColors[c.category] || '#999'}"></span>
+                <span>${c.category}</span>
+                <strong>${c.percentage}%</strong>
+              </div>
+            `).join('')}
+          </div>
+        `)}
+        ${panel("Top Suppliers by Spend", `
+          <div class="chart-container" style="height:280px;">
+            <canvas id="supplierChart"></canvas>
+          </div>
+        `)}
+      </div>
+      <div class="grid-1">
+        ${panel("12-Month Spend Trend", `
+          <div class="chart-container" style="height:260px;">
+            <canvas id="trendChart"></canvas>
+          </div>
+        `)}
+      </div>
+      <div class="grid-1">
+        ${panel("Savings Opportunities", table(["Category", "Current Spend", "Potential Savings", "Action"], [
+          ["Food ingredients", "¥385,200", "¥19,260 (5%)", "Consolidate suppliers"],
+          ["Frozen food", "¥256,800", "¥12,840 (5%)", "Negotiate volume discount"],
+          ["Packaging", "¥128,400", "¥6,420 (5%)", "Explore local alternatives"],
+          ["Consumables", "¥85,600", "¥4,280 (5%)", "Standardize specifications"],
+        ]))}
+      </div>
+      <script>
+        (function() {
+          if (typeof Chart === 'undefined') return;
+          const catColors = ${JSON.stringify(byCategory.reduce((acc, c) => { acc[c.category] = categoryColors[c.category]; return acc; }, {}))};
+          const catData = ${JSON.stringify(byCategory)};
+          const supData = ${JSON.stringify(bySupplier)};
+          const trendData = ${JSON.stringify(trends)};
+
+          setTimeout(() => {
+            // Category pie chart
+            const catCtx = document.getElementById('categoryChart');
+            if (catCtx) {
+              new Chart(catCtx, {
+                type: 'doughnut',
+                data: {
+                  labels: catData.map(c => c.category),
+                  datasets: [{ data: catData.map(c => c.amount), backgroundColor: catData.map(c => catColors[c.category] || '#999'), borderWidth: 0 }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+              });
+            }
+            // Supplier bar chart
+            const supCtx = document.getElementById('supplierChart');
+            if (supCtx) {
+              new Chart(supCtx, {
+                type: 'bar',
+                data: {
+                  labels: supData.map(s => s.supplier_name.length > 12 ? s.supplier_name.substring(0, 12) + '...' : s.supplier_name),
+                  datasets: [{ label: 'Spend (CNY)', data: supData.map(s => s.amount), backgroundColor: '#F05A28', borderRadius: 4 }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { grid: { display: false } } } }
+              });
+            }
+            // Trend line chart
+            const trendCtx = document.getElementById('trendChart');
+            if (trendCtx) {
+              new Chart(trendCtx, {
+                type: 'line',
+                data: {
+                  labels: trendData.map(t => t.month),
+                  datasets: [{ label: 'Spend (CNY)', data: trendData.map(t => t.amount), borderColor: '#F05A28', backgroundColor: 'rgba(240,90,40,0.1)', fill: true, tension: 0.4, pointRadius: 3 }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { grid: { color: '#f0f0f0' } } } }
+              });
+            }
+          }, 100);
+        })();
+      </script>
+    `;
+  } catch (e) {
+    return `<div class="empty">Error loading analytics: ${e.message}</div>`;
+  }
+}
+
+const categoryColors = {
+  "Food ingredients": "#F05A28",
+  "Frozen food": "#4A90D9",
+  "Packaging": "#50C878",
+  "Consumables": "#FFB347",
+  "LSP": "#9B59B6",
+  "Equipment": "#34495E"
+};
 
 async function collaborationPage() {
   try {
@@ -410,11 +571,24 @@ async function collaborationPage() {
         ["Receipt exception", "Site receipt differences are visible for supplier and buyer follow-up."],
         ["Settlement", "Monthly statement is confirmed before original invoice submission."]
       ]))}
+      ${panel("Settlement and invoice readiness", (() => {
+        const collsHeaders = ["Record", "Supplier", "Period", "Status", "Amount", "Next step"];
+        const collsRows = settlements.map(s => {
+          const nextStep = s.status === 'Published' ? 'Confirm' : s.status === 'Disputed' ? `<button class="text-btn" data-dispute-stm="${s.id}">Review dispute</button>` : 'Approve';
+          return `<tr data-record="${s.settlement_no}" data-type="settlement">
+            <td><div class="record-title">${s.settlement_no}</div></td>
+            <td>${s.supplier_name || '-'}</td>
+            <td>${s.period}</td>
+            <td><span class="badge ${badgeClass(s.status)}">${s.status}</span></td>
+            <td>${formatCurrency(s.total_amount, 'CNY')}</td>
+            <td>${nextStep}</td>
+          </tr>`;
+        }).join('');
+        return `<table class="table" data-table="settlement"><thead><tr>${collsHeaders.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${collsRows}</tbody></table>`;
+      })())}
       <div class="split">
         ${panel("PO and delivery collaboration", table(["PO", "Supplier", "Status", "Delivery date", "Amount", "Next step"],
           orders.map(o => [o.po_no, o.supplier_name || '-', o.status, formatDate(o.delivery_date), formatCurrency(o.total_amount, o.currency), o.status === 'Pending Supplier' ? 'Confirm' : o.status === 'Change Requested' ? 'Review change' : 'Track']), "order"))}
-        ${panel("Settlement and invoice readiness", table(["Record", "Supplier", "Period", "Status", "Amount", "Next step"],
-          settlements.map(s => [s.settlement_no, s.supplier_name || '-', s.period, s.status, formatCurrency(s.total_amount, 'CNY'), s.status === 'Published' ? 'Confirm' : s.status === 'Disputed' ? 'Review dispute' : 'Approve']), "settlement"))}
       </div>
     `;
   } catch (e) {
@@ -679,10 +853,43 @@ async function settlementPage() {
     const settlements = await api('/settlements');
     const invStm = settlements.find(s => s.status === 'Supplier Confirmed');
     if (invStm) cachedData.invoiceStmId = invStm.id;
-    return `
+    const currentTab = state.settlementTab || 'list';
+
+    // Dispute history for supplier
+    let disputeHistoryHtml = '';
+    if (workspace === 'supplier') {
+      try {
+        const disputes = await api('/settlement-disputes/supplier/history');
+        disputeHistoryHtml = `
+          <div class="tabs">
+            <button class="tab-btn ${currentTab === 'list' ? 'active' : ''}" data-tab="list" type="button">Settlement List</button>
+            <button class="tab-btn ${currentTab === 'invoice' ? 'active' : ''}" data-tab="invoice" type="button">Invoice</button>
+            <button class="tab-btn ${currentTab === 'disputes' ? 'active' : ''}" data-tab="disputes" type="button">Dispute History</button>
+          </div>
+          ${currentTab === 'disputes' ? panel("Dispute History", table(["Settlement", "Dispute Amount", "Status", "Resolved"],
+            disputes.map(d => [d.settlement_no, formatCurrency(d.dispute_amount, 'CNY'), d.status, formatDate(d.resolved_at)]), "dispute")) : ''}
+        `;
+      } catch (e) { /* no dispute history */ }
+    }
+
+    // Build settlement table manually to handle dispute button HTML
+    const stmHeaders = ["Record", "Period", "Status", "Amount", "Dispute", "Next step"];
+    const stmRows = settlements.map(s => {
+      const nextStep = s.status === 'Published' ? 'Confirm' : s.status === 'Disputed' ? `<button class="text-btn" data-dispute-stm="${s.id}">Review dispute</button>` : 'Track';
+      return `<tr data-record="${s.settlement_no}" data-type="settlement">
+        <td><div class="record-title">${s.settlement_no}</div><div class="record-sub">Click to open details</div></td>
+        <td>${s.period}</td>
+        <td><span class="badge ${badgeClass(s.status)}">${s.status}</span></td>
+        <td>${formatCurrency(s.total_amount, 'CNY')}</td>
+        <td>${s.dispute_amount > 0 ? formatCurrency(s.dispute_amount, 'CNY') : '-'}</td>
+        <td>${nextStep}</td>
+      </tr>`;
+    }).join('');
+    const stmTable = `<table class="table" data-table="settlement"><thead><tr>${stmHeaders.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${stmRows}</tbody></table>`;
+
+    const listHtml = `
       <div class="split">
-        ${panel("Monthly settlement and invoice control", table(["Record", "Period", "Status", "Amount", "Dispute", "Next step"],
-          settlements.map(s => [s.settlement_no, s.period, s.status, formatCurrency(s.total_amount, 'CNY'), s.dispute_amount > 0 ? formatCurrency(s.dispute_amount, 'CNY') : '-', s.status === 'Published' ? 'Confirm' : s.status === 'Disputed' ? 'Review dispute' : 'Track']), "settlement"))}
+        ${panel("Monthly settlement and invoice control", stmTable + `<div style="margin-top:8px"><button class="secondary-btn" type="button">Download all</button></div>`)}
         ${panel("Invoice submission", `
           <div class="form-grid" data-form="invoice">
             ${field("Settlement statement", invStm?.settlement_no || settlements[0]?.settlement_no || "STM-2605-144")}
@@ -699,8 +906,60 @@ async function settlementPage() {
         `)}
       </div>
     `;
+
+    return disputeHistoryHtml + (currentTab !== 'disputes' || workspace !== 'supplier' ? listHtml : '');
   } catch (e) {
     return `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+async function openSettlementDisputeDrawer(settlementId) {
+  try {
+    const settlement = await api(`/settlements/${settlementId}`);
+    const logs = await api(`/settlement-disputes/${settlementId}/dispute-logs`);
+
+    const isBuyer = workspace === 'buyer' || workspace === 'admin';
+
+    drawerKicker.textContent = 'Settlement Dispute';
+    drawerTitle.textContent = settlement.settlement_no;
+    drawerBody.innerHTML = `
+      <div class="detail-section">
+        <p><span class="badge ${badgeClass(settlement.status)}">${settlement.status.toUpperCase()}</span></p>
+        <p><strong>Original Amount:</strong> ${formatCurrency(settlement.total_amount + (settlement.dispute_amount || 0), 'CNY')}</p>
+        <p><strong>Dispute Amount:</strong> ${formatCurrency(settlement.dispute_amount || 0, 'CNY')}</p>
+        ${settlement.dispute_reason ? `<p><strong>Dispute Reason:</strong> ${settlement.dispute_reason}</p>` : ''}
+      </div>
+      <div class="detail-section">
+        <h4>Negotiation Log</h4>
+        <div class="message-log">
+          ${logs.length === 0 ? '<p class="text-muted">No messages yet.</p>' : logs.map(l => `
+            <div class="message-item ${l.sender_role}">
+              <div class="message-header">
+                <strong>${l.sender_name || l.sender_role}</strong>
+                <span class="text-muted">${formatDate(l.created_at)}</span>
+              </div>
+              <p>${l.message}</p>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      ${settlement.status === 'Disputed' ? `
+      <div class="detail-section">
+        <h4>Add Message</h4>
+        <textarea id="disputeMessageInput" class="input" rows="3" placeholder="Enter your message..."></textarea>
+        <button class="primary-btn" data-action="send-dispute-message" data-settlement-id="${settlementId}" type="button">Send Message</button>
+      </div>
+      ${isBuyer ? `
+      <div class="drawer-actions">
+        <button class="primary-btn" data-action="accept-dispute" data-settlement-id="${settlementId}" type="button">Accept Dispute</button>
+        <button class="secondary-btn" data-action="adjust-dispute" data-settlement-id="${settlementId}" type="button">Adjust Amount</button>
+      </div>` : ''}
+      ` : ''}
+    `;
+    drawer.setAttribute('aria-hidden', 'false');
+    drawerBackdrop.hidden = false;
+  } catch (e) {
+    showToast(`Error: ${e.message}`, 'error');
   }
 }
 
@@ -851,6 +1110,7 @@ async function adminAuditPage() {
 
 const renderers = {
   command: commandPage,
+  spendAnalytics: spendAnalyticsPage,
   suppliers: suppliersPage,
   sourcing: sourcingPage,
   tender: tenderPage,
@@ -888,7 +1148,8 @@ function iconSvg(name) {
     timer: `<svg ${attrs}><circle cx="12" cy="13" r="7"></circle><path d="M12 13V9"></path><path d="M12 13h3"></path><path d="M9 3h6"></path></svg>`,
     package: `<svg ${attrs}><path d="m12 3 8 4-8 4-8-4z"></path><path d="M4 7v9l8 5 8-5V7"></path><path d="M12 11v10"></path></svg>`,
     receipt: `<svg ${attrs}><path d="M6 3h12v18l-2-1-2 1-2-1-2 1-2-1-2 1z"></path><path d="M9 8h6"></path><path d="M9 12h6"></path><path d="M9 16h4"></path></svg>`,
-    folder: `<svg ${attrs}><path d="M3 7h7l2 2h9v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M3 7V6a2 2 0 0 1 2-2h4l2 3"></path></svg>`
+    folder: `<svg ${attrs}><path d="M3 7h7l2 2h9v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M3 7V6a2 2 0 0 1 2-2h4l2 3"></path></svg>`,
+    barChart: `<svg ${attrs}><path d="M3 3v18h18"></path><path d="M7 16v-4"></path><path d="M11 16V8"></path><path d="M15 16v-6"></path><path d="M19 16v-2"></path></svg>`
   };
   return icons[name] || icons.dashboard;
 }
@@ -946,7 +1207,20 @@ function bindDynamicEvents() {
     });
   });
   document.querySelectorAll("[data-record]").forEach((row) => {
-    row.addEventListener("click", () => openRecord(row.dataset.type, row.dataset.record));
+    row.addEventListener("click", () => {
+      if (row.dataset.type === 'contract') {
+        openContractDrawer(parseInt(row.dataset.record));
+      } else {
+        openRecord(row.dataset.type, row.dataset.record);
+      }
+    });
+  });
+  // Contract filter tabs
+  document.querySelectorAll("[data-contract-filter]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.contractFilter = btn.dataset.contractFilter;
+      render();
+    });
   });
   document.querySelectorAll("[data-open]").forEach((btn) => {
     btn.addEventListener("click", () => openDrawer("Action", btn.textContent.trim(), drawerContentFor(btn.dataset.open)));
@@ -1079,11 +1353,64 @@ function bindDynamicEvents() {
           showToast("Export Started", "Audit logs export is being prepared.");
         } else if (action === 'view-comparison') {
           showToast("Comparison", "Full quote comparison view would open here.");
+        } else if (action === 'contract-submit') {
+          const contractId = btn.dataset.id;
+          await api(`/contracts/${contractId}/submit`, { method: 'POST' });
+          showToast("Contract Submitted", "Contract has been submitted for approval.");
+          closeDrawer();
+          render();
+        } else if (action === 'contract-approve') {
+          const contractId = btn.dataset.id;
+          await api(`/contracts/${contractId}/approve`, { method: 'POST' });
+          showToast("Contract Approved", "Contract has been approved and is ready for signing.");
+          closeDrawer();
+          render();
+        } else if (action === 'contract-return') {
+          const contractId = btn.dataset.id;
+          const reason = prompt("Enter return reason:") || "Returned for revision";
+          await api(`/contracts/${contractId}/return`, { method: 'POST', body: JSON.stringify({ reason }) });
+          showToast("Contract Returned", "Contract has been returned with feedback.");
+          closeDrawer();
+          render();
+        } else if (action === 'contract-sign') {
+          const contractId = btn.dataset.id;
+          await api(`/contracts/${contractId}/sign`, { method: 'POST' });
+          showToast("Contract Signed", "Contract has been signed successfully.");
+          closeDrawer();
+          render();
+        } else if (action === 'send-dispute-message') {
+          const settlementId = btn.dataset.settlementId;
+          const input = document.getElementById('disputeMessageInput');
+          const message = input?.value?.trim();
+          if (!message) { showToast("Error", "Please enter a message"); return; }
+          await api(`/settlements/${settlementId}/dispute-logs`, { method: 'POST', body: JSON.stringify({ message }) });
+          showToast("Message Sent", "Your message has been added to the negotiation log.");
+          input.value = '';
+          openSettlementDisputeDrawer(settlementId);
+        } else if (action === 'accept-dispute') {
+          const settlementId = btn.dataset.settlementId;
+          await api(`/settlements/${settlementId}/accept-dispute`, { method: 'POST' });
+          showToast("Dispute Accepted", "Settlement amount has been adjusted.");
+          closeDrawer();
+          render();
+        } else if (action === 'adjust-dispute') {
+          const settlementId = btn.dataset.settlementId;
+          const amount = prompt("Enter adjusted settlement amount:");
+          if (!amount || isNaN(parseFloat(amount))) { showToast("Error", "Please enter a valid amount"); return; }
+          await api(`/settlements/${settlementId}/adjust-amount`, { method: 'POST', body: JSON.stringify({ adjusted_amount: parseFloat(amount), reason: 'Partial acceptance' }) });
+          showToast("Amount Adjusted", "Settlement amount has been updated.");
+          closeDrawer();
+          render();
         }
       } catch (e) {
         showToast("Error", e.message);
       }
     });
+  });
+
+  // Dispute button handlers
+  document.querySelectorAll("[data-dispute-stm]").forEach((btn) => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); openSettlementDisputeDrawer(parseInt(btn.dataset.disputeStm)); });
   });
 
   // Config save handlers
