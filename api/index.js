@@ -1,9 +1,29 @@
 // Vercel Serverless Function entry point
-// Wraps the Express app for serverless deployment
+// Ensures database is initialized before handling requests
 
-const app = require('../server/index');
+const db = require('../server/db');
+const { seed } = require('../server/seed');
 
-// Vercel expects a handler function
-module.exports = (req, res) => {
-  return app(req, res);
+let initialized = false;
+
+async function ensureInit() {
+  if (initialized) return;
+  await db.init();
+  const alreadySeeded = db.findAll('organizations').length > 0;
+  if (!alreadySeeded) {
+    await seed();
+  }
+  initialized = true;
+}
+
+// Vercel handler
+module.exports = async (req, res) => {
+  try {
+    await ensureInit();
+    const app = require('../server/index');
+    return app(req, res);
+  } catch (err) {
+    console.error('Handler error:', err.message);
+    res.status(500).json({ error: 'Server initialization failed: ' + err.message });
+  }
 };

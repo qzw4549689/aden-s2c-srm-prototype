@@ -8,11 +8,13 @@ const db = require('./db');
 
 const app = express();
 
-// Seed demo data on startup (async)
-(async () => {
-  await db.init();
-  await seed();
-})();
+// Seed demo data on startup (local dev only - Vercel handles this in api/index.js)
+if (!process.env.VERCEL) {
+  (async () => {
+    await db.init();
+    await seed();
+  })();
+}
 
 // Middleware
 app.use(cors());
