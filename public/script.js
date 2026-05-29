@@ -443,7 +443,7 @@ async function openContractDrawer(contractId) {
     `;
     drawer.setAttribute('aria-hidden', 'false');
     drawerBackdrop.hidden = false;
-    bindDrawerActions();
+    bindDynamicEvents();
   } catch (e) {
     showToast(`Error: ${e.message}`, 'error');
   }
@@ -985,7 +985,7 @@ async function openSettlementDisputeDrawer(settlementId) {
     `;
     drawer.setAttribute('aria-hidden', 'false');
     drawerBackdrop.hidden = false;
-    bindDrawerActions();
+    bindDynamicEvents();
   } catch (e) {
     showToast(`Error: ${e.message}`, 'error');
   }
