@@ -3,6 +3,7 @@ const API_BASE = '';
 
 let currentUser = null;
 let authToken = localStorage.getItem('aden_token');
+const _chartInstances = {};
 
 try {
   currentUser = JSON.parse(localStorage.getItem('aden_user') || '{}');
@@ -504,44 +505,53 @@ async function spendAnalyticsPage() {
           const supData = ${JSON.stringify(bySupplier)};
           const trendData = ${JSON.stringify(trends)};
 
-          setTimeout(() => {
-            // Category pie chart
-            const catCtx = document.getElementById('categoryChart');
-            if (catCtx) {
-              new Chart(catCtx, {
-                type: 'doughnut',
-                data: {
-                  labels: catData.map(c => c.category),
-                  datasets: [{ data: catData.map(c => c.amount), backgroundColor: catData.map(c => catColors[c.category] || '#999'), borderWidth: 0 }]
-                },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
-              });
-            }
-            // Supplier bar chart
-            const supCtx = document.getElementById('supplierChart');
-            if (supCtx) {
-              new Chart(supCtx, {
-                type: 'bar',
-                data: {
-                  labels: supData.map(s => s.supplier_name.length > 12 ? s.supplier_name.substring(0, 12) + '...' : s.supplier_name),
-                  datasets: [{ label: 'Spend (CNY)', data: supData.map(s => s.amount), backgroundColor: '#F05A28', borderRadius: 4 }]
-                },
-                options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { grid: { display: false } } } }
-              });
-            }
-            // Trend line chart
-            const trendCtx = document.getElementById('trendChart');
-            if (trendCtx) {
-              new Chart(trendCtx, {
-                type: 'line',
-                data: {
-                  labels: trendData.map(t => t.month),
-                  datasets: [{ label: 'Spend (CNY)', data: trendData.map(t => t.amount), borderColor: '#F05A28', backgroundColor: 'rgba(240,90,40,0.1)', fill: true, tension: 0.4, pointRadius: 3 }]
-                },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { grid: { color: '#f0f0f0' } } } }
-              });
-            }
-          }, 100);
+          // Wait for layout to settle before initializing charts
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              // Helper: destroy existing chart before creating new one
+              const destroyChart = (id) => { if (_chartInstances[id]) { _chartInstances[id].destroy(); delete _chartInstances[id]; } };
+
+              // Category doughnut chart
+              const catCtx = document.getElementById('categoryChart');
+              if (catCtx && catCtx.offsetParent) {
+                destroyChart('categoryChart');
+                _chartInstances.categoryChart = new Chart(catCtx, {
+                  type: 'doughnut',
+                  data: {
+                    labels: catData.map(c => c.category),
+                    datasets: [{ data: catData.map(c => c.amount), backgroundColor: catData.map(c => catColors[c.category] || '#999'), borderWidth: 0, hoverOffset: 8 }]
+                  },
+                  options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ctx.label + ': ¥' + ctx.parsed.toLocaleString() } } } }
+                });
+              }
+              // Supplier horizontal bar chart
+              const supCtx = document.getElementById('supplierChart');
+              if (supCtx && supCtx.offsetParent) {
+                destroyChart('supplierChart');
+                _chartInstances.supplierChart = new Chart(supCtx, {
+                  type: 'bar',
+                  data: {
+                    labels: supData.map(s => s.supplier_name.length > 10 ? s.supplier_name.substring(0, 10) + '...' : s.supplier_name),
+                    datasets: [{ label: 'Spend (CNY)', data: supData.map(s => s.amount), backgroundColor: '#F05A28', borderRadius: 4, barThickness: 20 }]
+                  },
+                  options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => 'Spend: ¥' + ctx.parsed.x.toLocaleString() } } }, scales: { x: { grid: { display: false }, ticks: { callback: (v) => '¥' + (v/1000).toFixed(0) + 'k' } }, y: { grid: { display: false } } } }
+                });
+              }
+              // Trend line chart
+              const trendCtx = document.getElementById('trendChart');
+              if (trendCtx && trendCtx.offsetParent) {
+                destroyChart('trendChart');
+                _chartInstances.trendChart = new Chart(trendCtx, {
+                  type: 'line',
+                  data: {
+                    labels: trendData.map(t => t.month),
+                    datasets: [{ label: 'Spend (CNY)', data: trendData.map(t => t.amount), borderColor: '#F05A28', backgroundColor: 'rgba(240,90,40,0.08)', fill: true, tension: 0.4, pointRadius: 4, pointBackgroundColor: '#F05A28', pointBorderColor: '#fff', pointBorderWidth: 2 }]
+                  },
+                  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => 'Spend: ¥' + ctx.parsed.y.toLocaleString() } } }, scales: { x: { grid: { display: false } }, y: { grid: { color: '#f0f0f0' }, ticks: { callback: (v) => '¥' + (v/1000).toFixed(0) + 'k' } } } }
+                });
+              }
+            });
+          });
         })();
       </script>
     `;
