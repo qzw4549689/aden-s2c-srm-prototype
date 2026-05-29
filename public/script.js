@@ -1477,8 +1477,14 @@ function openRecord(type, record) {
     actionButtons = `<button class="primary-btn" data-workflow="confirm-order" data-record="${record}" type="button">Confirm PO</button>
                      <button class="secondary-btn" data-workflow="request-change" data-record="${record}" type="button">Request change</button>`;
   } else if (type === 'settlement') {
-    actionButtons = `<button class="primary-btn" data-workflow="confirm-stm" data-record="${record}" type="button">Confirm settlement</button>
-                     <button class="secondary-btn" data-workflow="dispute-stm" data-record="${record}" type="button">Raise dispute</button>`;
+    const isBuyerWorkspace = workspace === 'buyer' || workspace === 'admin';
+    if (isBuyerWorkspace) {
+      actionButtons = `<button class="primary-btn" data-workflow="approve-stm" data-record="${record}" type="button">Approve settlement</button>
+                       <button class="secondary-btn" data-workflow="review-dispute-stm" data-record="${record}" type="button">Review dispute</button>`;
+    } else {
+      actionButtons = `<button class="primary-btn" data-workflow="confirm-stm" data-record="${record}" type="button">Confirm settlement</button>
+                       <button class="secondary-btn" data-workflow="dispute-stm" data-record="${record}" type="button">Raise dispute</button>`;
+    }
   } else if (type === 'asn') {
     actionButtons = `<button class="primary-btn" data-workflow="accept-asn" data-record="${record}" type="button">Accept ASN</button>
                      <button class="secondary-btn" data-workflow="exception-asn" data-record="${record}" type="button">Report exception</button>`;
@@ -1668,6 +1674,17 @@ function bindDrawerActions() {
           if (!order) throw new Error('Order not found');
           await api(`/orders/${order.id}/request-change`, { method: 'POST', body: JSON.stringify({ change_type: "delivery", proposed_date: "2026-06-10", change_reason: "Need to adjust delivery", comments: "Delay request" }) });
           showToast("Change Requested", `Change request submitted for ${order.po_no}.`);
+        } else if (workflow === 'approve-stm') {
+          const stms = await api('/settlements');
+          const stm = stms.find(s => record.includes(s.settlement_no));
+          if (!stm) throw new Error('Settlement not found');
+          await api(`/settlements/${stm.id}/approve`, { method: 'POST' });
+          showToast("Approved", `Settlement ${stm.settlement_no} approved.`);
+        } else if (workflow === 'review-dispute-stm') {
+          const stms = await api('/settlements');
+          const stm = stms.find(s => record.includes(s.settlement_no));
+          if (!stm) throw new Error('Settlement not found');
+          showToast("Review", `Review dispute for ${stm.settlement_no}.`);
         } else if (workflow === 'confirm-stm') {
           const stms = await api('/settlements');
           const stm = stms.find(s => record.includes(s.settlement_no));
