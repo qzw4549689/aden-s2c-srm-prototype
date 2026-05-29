@@ -422,6 +422,7 @@ async function openContractDrawer(contractId) {
 
     drawerKicker.textContent = 'Contract Detail';
     drawerTitle.textContent = contract.contract_no;
+    drawer.classList.add('open');
     drawerBody.innerHTML = `
       <div class="detail-section">
         <p><span class="badge ${badgeClass(contract.status)}">${contract.status.replace('_', ' ').toUpperCase()}</span></p>
@@ -442,6 +443,7 @@ async function openContractDrawer(contractId) {
     `;
     drawer.setAttribute('aria-hidden', 'false');
     drawerBackdrop.hidden = false;
+    bindDrawerActions();
   } catch (e) {
     showToast(`Error: ${e.message}`, 'error');
   }
@@ -946,6 +948,7 @@ async function openSettlementDisputeDrawer(settlementId) {
 
     drawerKicker.textContent = 'Settlement Dispute';
     drawerTitle.textContent = settlement.settlement_no;
+    drawer.classList.add('open');
     drawerBody.innerHTML = `
       <div class="detail-section">
         <p><span class="badge ${badgeClass(settlement.status)}">${settlement.status.toUpperCase()}</span></p>
@@ -982,6 +985,7 @@ async function openSettlementDisputeDrawer(settlementId) {
     `;
     drawer.setAttribute('aria-hidden', 'false');
     drawerBackdrop.hidden = false;
+    bindDrawerActions();
   } catch (e) {
     showToast(`Error: ${e.message}`, 'error');
   }
