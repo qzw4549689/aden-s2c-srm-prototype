@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const initSqlJs = require('sql.js/dist/sql-wasm.js');
+const sqlWasmPath = require.resolve('sql.js/dist/sql-wasm.wasm');
 
 const DB_FILE = path.join(__dirname, '..', 'data', 'srm.db');
 const DB_DIR = path.dirname(DB_FILE);
@@ -15,7 +16,9 @@ let initialized = false;
 // Lazy initialization: wait for SQL.js WASM to load
 async function init() {
   if (initialized) return;
-  SQL = await initSqlJs();
+  SQL = await initSqlJs({
+    locateFile: () => sqlWasmPath
+  });
 
   // Load existing DB or create new
   if (fs.existsSync(DB_FILE)) {
