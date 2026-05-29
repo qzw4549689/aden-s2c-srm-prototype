@@ -154,7 +154,7 @@ function table(headers, rows, type) {
       <thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
       <tbody>
         ${rows.map((row) => `
-          <tr data-record="${row[0] || row.id}" data-type="${type}">
+          <tr data-record="${row._id || row[0] || row.id}" data-type="${type}">
             ${row.map((cell, index) => {
               if (index === 0) return `<td><div class="record-title">${cell}</div><div class="record-sub">Click to open details</div></td>`;
               if (index === 3 || (typeof cell === 'string' && !cell.includes('<') && String(cell).match(/Qualified|Trial|Potential|Open|Draft|review|approval|Signature|Active|Confirmed|planned|Passed|Exception|Expiry|Approved|Rejected|Disputed|Shipped|Preparing|Returned|Buyer Review|Award Pending|Award Approved|Partially Confirmed|Change Requested|Invoice Submitted|Supplier Confirmed/i))) {
@@ -396,7 +396,7 @@ async function contractsPage() {
       </div>
       <div class="split">
         ${panel("Contract repository", table(["Contract", "Supplier", "Amount", "Start", "End", "Status"],
-          filtered.map(c => [c.contract_no || c.id, c.supplier_name || '-', formatCurrency(c.total_amount, c.currency), formatDate(c.start_date), formatDate(c.end_date), c.status]), "contract"),
+          filtered.map(c => { const r = [c.contract_no || c.id, c.supplier_name || '-', formatCurrency(c.total_amount, c.currency), formatDate(c.start_date), formatDate(c.end_date), c.status]; r._id = c.id; return r; }), "contract"),
           `<button class="secondary-btn" data-action="new-contract" type="button">New contract</button>`)}
       </div>
     `;
